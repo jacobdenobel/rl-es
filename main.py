@@ -5,7 +5,7 @@ import json
 
 import numpy as np
 import gymnasium as gym
-from algorithms import MAES, DR1, ARSV1, CSA
+from algorithms import MAES, DR1, ARSV1, CSA, DR2
 from objective import Objective
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
@@ -22,7 +22,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--budget", default=20_000, help="Number of fitness evaluations", type=int
+        "--budget", default=10_000, help="Number of fitness evaluations", type=int
     )
     parser.add_argument(
         "--seed", default=42, help="Set seed for reproducibility", type=int
@@ -32,6 +32,18 @@ if __name__ == "__main__":
         help="Number of episodes to play in the fitness function",
         type=int,
         default=1,
+    )
+    parser.add_argument(
+        "--n_test_episodes",
+        help="Number of episodes to play in the fitness function",
+        type=int,
+        default=10,
+    )
+    parser.add_argument(
+        "--test_every_nth_iteration",
+        help="Number of episodes to play in the fitness function",
+        type=int,
+        default=25,
     )
     parser.add_argument(
         "--n_timesteps",
@@ -52,14 +64,14 @@ if __name__ == "__main__":
     parser.add_argument("--normalized", action="store_true")
     parser.add_argument("--uncertainty_handled", action="store_true")
     parser.add_argument(
-        "--initialization", type=str, choices=("zero", "uniform"), default="zero"
+        "--initialization", type=str, choices=("zero", "uniform", "gauss"), default="zero"
     )
     parser.add_argument(
-        "--strategy", type=str, choices=("maes", "dr1", "ars-v1", "csa"), default="csa"
+        "--strategy", type=str, choices=("maes", "dr1", "ars-v1", "csa", "dr2"), default="csa"
     )
 
     parser.add_argument("--env_name", type=str, default="LunarLander-v2", choices=ENVS)
-
+    parser.add_argument("--single_episode_per_eval", action="store_true")
     parser.add_argument(
         "--play",
         type=str,
@@ -76,6 +88,7 @@ if __name__ == "__main__":
     if args.n_timesteps is None:
         args.n_timesteps = spec.max_episode_steps
 
+
     print(args)
     print(spec)
 
@@ -88,39 +101,65 @@ if __name__ == "__main__":
         env_name=args.env_name,
         normalized=args.normalized,
         no_bias=not args.with_bias,
+        single_episode_per_eval=args.single_episode_per_eval,
+        n_test_episodes=args.n_test_episodes
     )
     plot = True
     data_folder = f"{DATA}/{args.env_name}/{args.strategy}/{t}"
     if args.play is None:
         os.makedirs(data_folder)
-        with open(os.path.join(data_folder, "settings.json"), "w+") as f:
-            json.dump(vars(args), f)
         if args.strategy == "maes":
             optimizer = MAES(
+                obj.n,
                 args.budget,
                 data_folder=data_folder,
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
+                test_gen=args.test_every_nth_iteration
             )
         elif args.strategy == "dr1":
             optimizer = DR1(
+                obj.n,
                 args.budget,
                 data_folder=data_folder,
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
+                test_gen=args.test_every_nth_iteration
             )
-        elif args.strategy == "ars-v1":
-            optimizer = ARSV1(args.budget, data_folder=data_folder)
-
+        elif args.strategy == "dr2":
+            optimizer = DR2(
+                obj.n,
+                args.budget,
+                data_folder=data_folder,
+                initialization=args.initialization,
+                uncertainty_handling=args.uncertainty_handled,
+                test_gen=args.test_every_nth_iteration
+            )
         elif args.strategy == "csa":
             optimizer = CSA(
+                obj.n,
                 args.budget,
                 data_folder=data_folder,
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
+                test_gen=args.test_every_nth_iteration
             )
+
+        elif args.strategy == "ars-v1":
+            optimizer = ARSV1(args.budget, 
+                              data_folder=data_folder,
+                              test_gen=args.test_every_nth_iteration
+                            )
         else:
             raise ValueError()
+
+        args.sigma0 = optimizer.sigma0
+        args.mu = int(optimizer.mu)
+        args.lambda_ = int(optimizer.lambda_)
+        args.n = int(obj.n)
+
+        with open(os.path.join(data_folder, "settings.json"), "w+") as f:
+            json.dump(vars(args), f)
 
         best, mean = optimizer(obj)
         np.save(f"{data_folder}/best.npy", best.x)

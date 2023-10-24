@@ -26,6 +26,7 @@ class Objective:
     n_test_episodes: int = 10
     normalized: bool = True
     no_bias: bool = False
+    single_episode_per_eval: bool = True
 
     def __post_init__(self):
         self.envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
@@ -74,13 +75,22 @@ class Objective:
         self.net.set_weights(x)
 
         returns = np.zeros(self.n_episodes)
+        collect_reward = np.ones(self.n_episodes , dtype=int)
         for _ in range(self.n_timesteps):
             actions = self.net(self.normalizer(observations))
-            observations, rewards, dones, *_ = envs.step(actions)
+            observations, rewards, dones, trunc, *_ = envs.step(actions)
+            rewards *= collect_reward
             rewards = self.fix_reward(rewards, dones)
             returns += rewards
+            self.n_train_timesteps += 1
 
-        self.n_train_timesteps += self.n_timesteps
+            finished_episodes = np.logical_or(dones, trunc)
+            if self.single_episode_per_eval and any(finished_episodes):
+                collect_reward = (collect_reward - finished_episodes).clip(0)
+
+            if not any(collect_reward):
+                break
+
         self.n_train_episodes += self.n_episodes
         return -np.median(returns)
 
@@ -113,9 +123,9 @@ class Objective:
 
         actions = np.ones(action_shape, dtype=int)
 
-        collect_reward = np.ones(self.n_episodes * n)
+        collect_reward = np.ones(self.n_episodes * n, dtype=int)
 
-        for _ in range(self.n_timesteps):
+        for t in range(self.n_timesteps):
             for i, net in enumerate(self.nets):
                 idx = i * self.n_episodes
                 actions[idx : idx + self.n_episodes] = net(
@@ -128,7 +138,13 @@ class Objective:
 
             rewards = self.fix_reward(rewards, dones)
             returns += rewards.reshape(n, self.n_episodes)
+            
+            finished_episodes = np.logical_or(dones, trunc)
+            if self.single_episode_per_eval and any(finished_episodes):
+                collect_reward = (collect_reward - finished_episodes).clip(0)
 
+            if not any(collect_reward):
+                break
         self.n_train_episodes += self.n_episodes * n
         return -np.median(returns, axis=1)
 
@@ -173,8 +189,11 @@ class Objective:
                         episode_index=0,
                         name_prefix=name,
                     )
+                os.makedirs(f"{data_folder}/policies", exist_ok=True)
+                np.save(f"{data_folder}/policies/{name}.pkl", x)
                 render_mode = None
             returns.append(ret)
+            env.close()
         if plot:
             plt.figure()
             plt.hist(returns)

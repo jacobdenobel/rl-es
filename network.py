@@ -55,7 +55,7 @@ class Network:
     hidden_size: int = 16
     n_layers: int = 1
     last_activation: callable = argmax
-    first_bias: bool = True
+    bias: bool = True
     w: np.ndarray = None
 
     def __post_init__(self):
@@ -65,17 +65,24 @@ class Network:
                     self.input_size,
                     self.output_size,
                     self.last_activation,
-                    self.first_bias,
+                    self.bias,
                 )
             ]
         else:
             self.layers = (
-                [Layer(self.input_size, self.hidden_size, self.first_bias)]
+                [Layer(self.input_size, self.hidden_size, bias=self.bias)]
                 + [
-                    Layer(self.hidden_size, self.hidden_size)
+                    Layer(self.hidden_size, self.hidden_size, bias=self.bias)
                     for _ in range(self.n_layers - 2)
                 ]
-                + [Layer(self.hidden_size, self.output_size, self.last_activation)]
+                + [
+                    Layer(
+                        self.hidden_size,
+                        self.output_size,
+                        self.last_activation,
+                        self.bias,
+                    )
+                ]
             )
 
         self.n_weights = sum(layer.size for layer in self.layers)
@@ -98,7 +105,6 @@ class Network:
         for layer in self.layers:
             x = layer(x)
         return x
-
 
 
 @dataclass

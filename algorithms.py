@@ -31,6 +31,8 @@ class Logger:
                 "sigma",
                 "best_test",
                 "current_test",
+                "population_mean",
+                "population_std",
             )
             self.writer.write(f'{",".join(self.columns)}\n')
 
@@ -50,6 +52,8 @@ def init(dim, lb, ub, method="zero"):
         return np.zeros(dim)
     elif method == "uniform":
         return np.random.uniform(lb, ub)
+    elif method == "gauss":
+        return np.random.normal(size=dim)
     raise ValueError()
 
 
@@ -74,6 +78,7 @@ class State:
         best_offspring: Solution,
         mean: Solution,
         sigma: float,
+        f: np.ndarray
     ) -> None:
         self.counter += 1
         toc = time.perf_counter()
@@ -107,6 +112,7 @@ class State:
             )
             print("Test with mean x (max):", self.mean_test)
 
+
         self.logger.write(
             (
                 self.counter,
@@ -115,10 +121,12 @@ class State:
                 problem.n_train_episodes,
                 problem.n_train_timesteps,
                 -self.best.y,
-                self.mean.y,
+                -self.mean.y,
                 sigma,
                 self.best_test,
                 self.mean_test,
+                np.mean(-f),
+                np.std(-f)
             )
         )
 
@@ -190,39 +198,41 @@ class WeightedRecombination:
 
 @dataclass
 class DR1:
+    n: int
     budget: int = 25_000
+    mu: int = None
     lambda_: int = 10
-    sigma0: float = 1
+    sigma0: float = .5
     verbose: bool = True
     test_gen: int = 25
     initialization: str = "zero"
     data_folder: str = None
     uncertainty_handling: bool = False
 
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
+        self.mu = 1
+    
     def __call__(self, problem: Objective):
-        dim = problem.n
-        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(dim))).astype(int)
-
-        beta_scale = 1 / dim
+        beta_scale = 1 / self.n
         beta = np.sqrt(beta_scale)
         zeta = np.array([5 / 7, 7 / 5])
-        sigma = np.ones((dim, 1)) * self.sigma0
-
+        sigma = np.ones((self.n, 1)) * self.sigma0
         root_pi = np.sqrt(2 / np.pi)
 
-        x_prime = init(dim, problem.lb, problem.ub, self.initialization)
+        x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
 
         state = State(self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
 
         try:
             while self.budget > state.counter * self.lambda_:
-                z = np.random.normal(size=(dim, self.lambda_))
+                z = np.random.normal(size=(self.n, self.lambda_))
                 zeta_i = np.random.choice(zeta, self.lambda_)
                 X = x_prime + (zeta_i * (sigma * z)).T
                 f = problem(X.T)
 
-                idx, f = uch.update(problem, f, X.T, dim, self.lambda_)
+                idx, f = uch.update(problem, f, X.T, self.n, self.lambda_)
                 idx_min = idx[0]
 
                 if uch.should_update():
@@ -237,6 +247,74 @@ class DR1:
                     Solution(f[idx_min], x_prime.copy()),
                     Solution(np.mean(f), np.mean(X, axis=0)),
                     np.mean(sigma),
+                    f,
+                )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            state.logger.close()
+        return state.best, state.mean
+    
+
+@dataclass
+class DR2:
+    n: int
+    budget: int = 25_000
+    mu: int = None
+    lambda_: int = 10
+    sigma0: float = .5
+    verbose: bool = True
+    test_gen: int = 25
+    initialization: str = "zero"
+    data_folder: str = None
+    uncertainty_handling: bool = False
+
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
+        self.mu = 1
+    
+    def __call__(self, problem: Objective):
+        beta_scale = 1 / self.n
+        beta = np.sqrt(beta_scale)
+        c = beta
+
+        zeta = np.zeros((self.n, 1))
+        sigma_local = np.ones((self.n, 1)) * self.sigma0
+        sigma = self.sigma0
+
+        c1 = np.sqrt(c / (2 - c))
+        c2 = np.sqrt(self.n) * c1
+
+        x_prime = init(self.n, problem.lb, problem.ub, self.initialization).reshape(-1, 1)
+
+        state = State(self.data_folder, self.test_gen, self.lambda_)
+        uch = UncertaintyHandling(self.uncertainty_handling)
+
+        try:
+            while self.budget > state.counter * self.lambda_:
+                Z = np.random.normal(size=(self.n, self.lambda_))
+                Y = sigma * sigma_local * Z
+                X = x_prime + Y
+                f = problem(X)
+                idx, f = uch.update(problem, f, X, self.n, self.lambda_)
+                idx_min = idx[0]
+
+                if uch.should_update():
+                    x_prime = (x_prime.T + (Y[:, idx_min])).T
+                    z_prime = Z[:, idx_min].reshape(-1, 1)
+
+                    zeta = ((1 - c) * zeta) + (c * z_prime)
+                    sigma *= np.power(
+                        np.exp((np.linalg.norm(zeta) / c2) - 1 + (1 / (5 * self.n))), beta
+                    )
+                    sigma_local *= np.power((np.abs(zeta) / c1) + (7 / 20), beta_scale)
+
+                state.update(
+                    problem,
+                    Solution(f[idx_min], x_prime.ravel().copy()),
+                    Solution(np.mean(f), np.mean(X, axis=1)),
+                    np.mean(sigma),
+                    f,
                 )
         except KeyboardInterrupt:
             pass
@@ -247,45 +325,47 @@ class DR1:
 
 @dataclass
 class CSA:
+    n: int
     budget: int = 25_000
     lambda_: int = None
     mu: float = None
-    sigma0: float = 1
+    sigma0: float = .5
     verbose: bool = True
     test_gen: int = 25
     initialization: str = "zero"
     data_folder: str = None
     uncertainty_handling: bool = False
 
-    def __call__(self, problem: Objective):
-        n = problem.n
-        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(n))).astype(int)
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
-
         self.mu = self.lambda_ // 2
+        print(f"n: {self.n}, lambda: {self.lambda_}, mu: {self.mu}")
 
+
+    def __call__(self, problem: Objective):
         weights = WeightedRecombination(self.mu, self.lambda_)
 
-        echi = np.sqrt(n) * (1 - (1 / n / 4) - (1 / n / n / 21))
+        echi = np.sqrt(self.n) * (1 - (1 / self.n / 4) - (1 / self.n / self.n / 21))
         mueff = 1 / np.sum(np.power(weights.w, 2))
-        c_s = (mueff + 2) / (n + mueff + 5)
-        d_s = 1 + c_s + 2 * max(0, np.sqrt((mueff - 1) / (n + 1)) - 1)
+        c_s = (mueff + 2) / (self.n + mueff + 5)
+        d_s = 1 + c_s + 2 * max(0, np.sqrt((mueff - 1) / (self.n + 1)) - 1)
         sqrt_s = np.sqrt(c_s * (2 - c_s) * mueff)
 
-        x = init(n, problem.lb, problem.ub, self.initialization).reshape(-1, 1)
+        x = init(self.n, problem.lb, problem.ub, self.initialization).reshape(-1, 1)
         sigma = self.sigma0
-        s = np.ones((n, 1))
+        s = np.ones((self.n, 1))
 
         state = State(self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         try:
             while self.budget > state.counter * self.lambda_:
-                Z = np.random.normal(0, 1, (n, self.lambda_))
+                Z = np.random.normal(0, 1, (self.n, self.lambda_))
                 X = x + (sigma * Z)
                 f = problem(X)
 
-                idx, f = uch.update(problem, f, X, n, self.lambda_)
+                idx, f = uch.update(problem, f, X, self.n, self.lambda_)
                 mu_best = idx[: self.mu]
 
                 if uch.should_update():
@@ -299,6 +379,7 @@ class CSA:
                     Solution(f[idx[0]], X[:, idx[0]].copy()),
                     Solution((weights.w * f[mu_best]).sum(), x.copy()),
                     sigma,
+                    f,
                 )
 
         except KeyboardInterrupt:
@@ -310,50 +391,50 @@ class CSA:
 
 @dataclass
 class MAES:
+    n: int
     budget: int = 25_000
     lambda_: int = None
     mu: float = None
-    sigma0: float = 1
+    sigma0: float = .5
     verbose: bool = True
     test_gen: int = 25
     initialization: str = "zero"
     data_folder: str = None
     uncertainty_handling: bool = False
 
-    def __call__(self, problem: Objective):
-        n = problem.n
-        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(n))).astype(int)
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
-
         self.mu = self.lambda_ // 2
-        print(f"n: {n}, lambda: {self.lambda_}, mu: {self.mu}")
+        print(f"n: {self.n}, lambda: {self.lambda_}, mu: {self.mu}")
 
+    def __call__(self, problem: Objective):
         weights = WeightedRecombination(self.mu, self.lambda_)
 
-        echi = np.sqrt(n) * (1 - (1 / n / 4) - (1 / n / n / 21))
+        echi = np.sqrt(self.n) * (1 - (1 / self.n / 4) - (1 / self.n / self.n / 21))
         mueff = 1 / np.sum(np.power(weights.w, 2))
-        c_s = (mueff + 2) / (n + mueff + 5)
-        c_1 = 2 / (pow(n + 1.3, 2) + mueff)
-        c_mu = min(1 - c_1, 2 * (mueff - 2 + (1 / mueff)) / (pow(n + 2, 2) + mueff))
-        d_s = 1 + c_s + 2 * max(0, np.sqrt((mueff - 1) / (n + 1)) - 1)
+        c_s = (mueff + 2) / (self.n + mueff + 5)
+        c_1 = 2 / (pow(self.n + 1.3, 2) + mueff)
+        c_mu = min(1 - c_1, 2 * (mueff - 2 + (1 / mueff)) / (pow(self.n + 2, 2) + mueff))
+        d_s = 1 + c_s + 2 * max(0, np.sqrt((mueff - 1) / (self.n + 1)) - 1)
         sqrt_s = np.sqrt(c_s * (2 - c_s) * mueff)
 
-        x = init(n, problem.lb, problem.ub, self.initialization).reshape(-1, 1)
+        x = init(self.n, problem.lb, problem.ub, self.initialization).reshape(-1, 1)
         sigma = self.sigma0
-        M = np.eye(n)
-        s = np.ones((n, 1))
+        M = np.eye(self.n)
+        s = np.ones((self.n, 1))
 
         state = State(self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         try:
             while self.budget > state.counter * self.lambda_:
-                Z = np.random.normal(0, 1, (n, self.lambda_))
+                Z = np.random.normal(0, 1, (self.n, self.lambda_))
                 D = M.dot(Z)
                 X = x + (sigma * D)
                 f = problem(X)
 
-                idx, f = uch.update(problem, f, X, n, self.lambda_)
+                idx, f = uch.update(problem, f, X, self.n, self.lambda_)
                 mu_best = idx[: self.mu]
 
                 if uch.should_update():
@@ -373,6 +454,7 @@ class MAES:
                     Solution(f[idx[0]], X[:, idx[0]].copy()),
                     Solution((weights.w * f[mu_best]).sum(), x.copy()),
                     sigma,
+                    f,
                 )
 
         except KeyboardInterrupt:
@@ -384,22 +466,22 @@ class MAES:
 
 @dataclass
 class ARSV1:
+    n: int
     budget: int = 25_000
     data_folder: str = None
     test_gen: int = 25
-    alpha: float = 0.02     # learning rate alpha
+    sigma0: float = 0.02     # learning rate alpha
     lambda_: int = 16       # n offspring for each direction
     mu: int = 16            # best offspring
     eta: float = 0.03       # noise parameter
 
     def __call__(self, problem: Objective):
-        n = problem.n
-        m = np.zeros((n, 1))
+        m = np.zeros((self.n, 1))
 
         state = State(self.data_folder, self.test_gen, self.lambda_ * 2)
         try:
             while self.budget > state.counter * self.lambda_ * 2:
-                delta = np.random.normal(size=(n, self.lambda_))
+                delta = np.random.normal(size=(self.n, self.lambda_))
 
                 neg = m - (self.eta * delta)
                 pos = m + (self.eta * delta)
@@ -411,7 +493,7 @@ class ARSV1:
                 idx = np.argsort(best_rewards)[::-1]
 
                 sigma_rewards = np.r_[neg_reward, pos_reward].std()
-                weight = self.alpha / (self.lambda_ * sigma_rewards)
+                weight = self.sigma0 / (self.lambda_ * sigma_rewards)
 
                 delta_rewards = pos_reward - neg_reward
                 m += (weight * (delta_rewards[idx] * delta[:, idx]).sum(axis=1, keepdims=True))
