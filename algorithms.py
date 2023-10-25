@@ -245,7 +245,7 @@ class DR1:
                     y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
                     x_prime = x_prime + y_prime
 
-                    z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * weights.mueff
+                    z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * np.sqrt(weights.mueff)
                     zeta_w = np.sum(zeta_i[:, mu_best] * weights.w)
 
                     zeta_sel = np.exp(z_prime - root_pi)
@@ -318,7 +318,7 @@ class DR2:
                 idx_min = idx[0]
 
                 if uch.should_update():
-                    z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * weights.mueff
+                    z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * np.sqrt(weights.mueff)
                     # z_prime = Z[:, idx_min].reshape(-1, 1)
                     y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
                     x_prime = x_prime + y_prime
