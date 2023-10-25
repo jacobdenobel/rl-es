@@ -47,15 +47,6 @@ class Logger:
             self.writer.close()
 
 
-def init(dim, lb, ub, method="zero"):
-    if method == "zero":
-        return np.zeros(dim)
-    elif method == "uniform":
-        return np.random.uniform(lb, ub)
-    elif method == "gauss":
-        return np.random.normal(size=dim)
-    raise ValueError()
-
 
 class State:
     def __init__(self, data_folder, test_gen, lamb):
@@ -195,14 +186,23 @@ class WeightedRecombination:
         self.w_all = np.r_[self.w, -self.w[::-1]]
         self.mueff = 1 / np.sum(np.power(self.w, 2))
 
+    
+def init(dim, lb, ub, method="zero"):
+    if method == "zero":
+        return np.zeros((dim, 1))
+    elif method == "uniform":
+        return np.random.uniform(lb, ub, size=(dim, 1))
+    elif method == "gauss":
+        return np.random.normal(size=(dim, 1))
+    raise ValueError()
 
 @dataclass
 class DR1:
     n: int
     budget: int = 25_000
     mu: int = None
-    lambda_: int = 10
-    sigma0: float = .5
+    lambda_: int = None
+    sigma0: float = 1
     verbose: bool = True
     test_gen: int = 25
     initialization: str = "zero"
@@ -211,7 +211,10 @@ class DR1:
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
-        self.mu = 1
+        if self.lambda_ % 2 != 0:
+            self.lambda_ += 1
+        self.mu = self.mu or self.lambda_ // 2
+        print(f"n: {self.n}, lambda: {self.lambda_}, mu: {self.mu}")
     
     def __call__(self, problem: Objective):
         beta_scale = 1 / self.n
@@ -224,28 +227,36 @@ class DR1:
 
         state = State(self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
+        weights = WeightedRecombination(self.mu, self.lambda_)
 
         try:
             while self.budget > state.counter * self.lambda_:
-                z = np.random.normal(size=(self.n, self.lambda_))
-                zeta_i = np.random.choice(zeta, self.lambda_)
-                X = x_prime + (zeta_i * (sigma * z)).T
-                f = problem(X.T)
+                Z = np.random.normal(size=(self.n, self.lambda_))
+                zeta_i = np.random.choice(zeta, (1, self.lambda_))
+                Y = (zeta_i * (sigma * Z))
+                X = x_prime + Y
+                f = problem(X)
 
-                idx, f = uch.update(problem, f, X.T, self.n, self.lambda_)
+                idx, f = uch.update(problem, f, X, self.n, self.lambda_)
+                mu_best = idx[: self.mu]
                 idx_min = idx[0]
 
                 if uch.should_update():
-                    x_prime = X[idx_min, :].copy()
-                    zeta_sel = np.exp(np.abs(z[:, idx_min]) - root_pi)
+                    y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
+                    x_prime = x_prime + y_prime
+
+                    z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * weights.mueff
+                    zeta_w = np.sum(zeta_i[:, mu_best] * weights.w)
+
+                    zeta_sel = np.exp(z_prime - root_pi)
                     sigma *= (
-                        np.power(zeta_i[idx_min], beta) * np.power(zeta_sel, beta_scale)
+                        np.power(zeta_w, beta) * np.power(zeta_sel, beta_scale)
                     ).reshape(-1, 1)
 
                 state.update(
                     problem,
-                    Solution(f[idx_min], x_prime.copy()),
-                    Solution(np.mean(f), np.mean(X, axis=0)),
+                    Solution(f[idx_min], X[:, idx_min].copy()),
+                    Solution((weights.w * f[mu_best]).sum(), x_prime.copy()),
                     np.mean(sigma),
                     f,
                 )
@@ -261,8 +272,8 @@ class DR2:
     n: int
     budget: int = 25_000
     mu: int = None
-    lambda_: int = 10
-    sigma0: float = .5
+    lambda_: int = None
+    sigma0: float = 1
     verbose: bool = True
     test_gen: int = 25
     initialization: str = "zero"
@@ -271,7 +282,10 @@ class DR2:
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
-        self.mu = 1
+        if self.lambda_ % 2 != 0:
+            self.lambda_ += 1
+        self.mu = self.mu or self.lambda_ // 2
+        print(f"n: {self.n}, lambda: {self.lambda_}, mu: {self.mu}")
     
     def __call__(self, problem: Objective):
         beta_scale = 1 / self.n
@@ -284,8 +298,10 @@ class DR2:
 
         c1 = np.sqrt(c / (2 - c))
         c2 = np.sqrt(self.n) * c1
+        c3 = 1 + (1 / (5 * self.n))
 
-        x_prime = init(self.n, problem.lb, problem.ub, self.initialization).reshape(-1, 1)
+        weights = WeightedRecombination(self.mu, self.lambda_)
+        x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
 
         state = State(self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
@@ -293,26 +309,30 @@ class DR2:
         try:
             while self.budget > state.counter * self.lambda_:
                 Z = np.random.normal(size=(self.n, self.lambda_))
-                Y = sigma * sigma_local * Z
+                Y = sigma * (sigma_local * Z)
                 X = x_prime + Y
                 f = problem(X)
+
                 idx, f = uch.update(problem, f, X, self.n, self.lambda_)
+                mu_best = idx[: self.mu]
                 idx_min = idx[0]
 
                 if uch.should_update():
-                    x_prime = (x_prime.T + (Y[:, idx_min])).T
-                    z_prime = Z[:, idx_min].reshape(-1, 1)
+                    z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * weights.mueff
+                    # z_prime = Z[:, idx_min].reshape(-1, 1)
+                    y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
+                    x_prime = x_prime + y_prime
 
                     zeta = ((1 - c) * zeta) + (c * z_prime)
-                    sigma *= np.power(
-                        np.exp((np.linalg.norm(zeta) / c2) - 1 + (1 / (5 * self.n))), beta
+                    sigma = sigma * np.power(
+                        np.exp((np.linalg.norm(zeta) / c2) - c3), beta
                     )
                     sigma_local *= np.power((np.abs(zeta) / c1) + (7 / 20), beta_scale)
 
                 state.update(
                     problem,
-                    Solution(f[idx_min], x_prime.ravel().copy()),
-                    Solution(np.mean(f), np.mean(X, axis=1)),
+                    Solution(f[idx_min], X[:, idx_min].copy()),
+                    Solution((weights.w * f[mu_best]).sum(), x_prime.copy()),
                     np.mean(sigma),
                     f,
                 )
@@ -348,12 +368,12 @@ class CSA:
         weights = WeightedRecombination(self.mu, self.lambda_)
 
         echi = np.sqrt(self.n) * (1 - (1 / self.n / 4) - (1 / self.n / self.n / 21))
-        mueff = 1 / np.sum(np.power(weights.w, 2))
-        c_s = (mueff + 2) / (self.n + mueff + 5)
-        d_s = 1 + c_s + 2 * max(0, np.sqrt((mueff - 1) / (self.n + 1)) - 1)
-        sqrt_s = np.sqrt(c_s * (2 - c_s) * mueff)
+        
+        c_s = (weights.mueff + 2) / (self.n + weights.mueff + 5)
+        d_s = 1 + c_s + 2 * max(0, np.sqrt((weights.mueff - 1) / (self.n + 1)) - 1)
+        sqrt_s = np.sqrt(c_s * (2 - c_s) * weights.mueff)
 
-        x = init(self.n, problem.lb, problem.ub, self.initialization).reshape(-1, 1)
+        x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
         sigma = self.sigma0
         s = np.ones((self.n, 1))
 
@@ -362,23 +382,23 @@ class CSA:
         try:
             while self.budget > state.counter * self.lambda_:
                 Z = np.random.normal(0, 1, (self.n, self.lambda_))
-                X = x + (sigma * Z)
+                X = x_prime + (sigma * Z)
                 f = problem(X)
 
                 idx, f = uch.update(problem, f, X, self.n, self.lambda_)
                 mu_best = idx[: self.mu]
-
+                idx_min = idx[0]
                 if uch.should_update():
-                    z = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
-                    x = x + (sigma * z)
-                    s = ((1 - c_s) * s) + (sqrt_s * z)
+                    z_prime = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
+                    x_prime = x_prime + (sigma * z_prime)
+                    s = ((1 - c_s) * s) + (sqrt_s * z_prime)
                     sigma = sigma * np.exp(c_s / d_s * (np.linalg.norm(s) / echi - 1))
 
                 state.update(
                     problem,
-                    Solution(f[idx[0]], X[:, idx[0]].copy()),
-                    Solution((weights.w * f[mu_best]).sum(), x.copy()),
-                    sigma,
+                    Solution(f[idx_min], X[:, idx_min].copy()),
+                    Solution((weights.w * f[mu_best]).sum(), x_prime.copy()),
+                    np.mean(sigma),
                     f,
                 )
 
@@ -413,14 +433,13 @@ class MAES:
         weights = WeightedRecombination(self.mu, self.lambda_)
 
         echi = np.sqrt(self.n) * (1 - (1 / self.n / 4) - (1 / self.n / self.n / 21))
-        mueff = 1 / np.sum(np.power(weights.w, 2))
-        c_s = (mueff + 2) / (self.n + mueff + 5)
-        c_1 = 2 / (pow(self.n + 1.3, 2) + mueff)
-        c_mu = min(1 - c_1, 2 * (mueff - 2 + (1 / mueff)) / (pow(self.n + 2, 2) + mueff))
-        d_s = 1 + c_s + 2 * max(0, np.sqrt((mueff - 1) / (self.n + 1)) - 1)
-        sqrt_s = np.sqrt(c_s * (2 - c_s) * mueff)
+        c_s = (weights.mueff + 2) / (self.n + weights.mueff + 5)
+        c_1 = 2 / (pow(self.n + 1.3, 2) + weights.mueff)
+        c_mu = min(1 - c_1, 2 * (weights.mueff - 2 + (1 / weights.mueff)) / (pow(self.n + 2, 2) + weights.mueff))
+        d_s = 1 + c_s + 2 * max(0, np.sqrt((weights.mueff - 1) / (self.n + 1)) - 1)
+        sqrt_s = np.sqrt(c_s * (2 - c_s) * weights.mueff)
 
-        x = init(self.n, problem.lb, problem.ub, self.initialization).reshape(-1, 1)
+        x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
         sigma = self.sigma0
         M = np.eye(self.n)
         s = np.ones((self.n, 1))
@@ -431,17 +450,18 @@ class MAES:
             while self.budget > state.counter * self.lambda_:
                 Z = np.random.normal(0, 1, (self.n, self.lambda_))
                 D = M.dot(Z)
-                X = x + (sigma * D)
+                X = x_prime + (sigma * D)
                 f = problem(X)
 
                 idx, f = uch.update(problem, f, X, self.n, self.lambda_)
                 mu_best = idx[: self.mu]
+                idx_min = idx[0]
 
                 if uch.should_update():
-                    z = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
-                    d = np.sum(weights.w * D[:, mu_best], axis=1, keepdims=True)
-                    x = x + (sigma * d)
-                    s = ((1 - c_s) * s) + (sqrt_s * z)
+                    z_prime = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
+                    d_prime = np.sum(weights.w * D[:, mu_best], axis=1, keepdims=True)
+                    x_prime = x_prime + (sigma * d_prime)
+                    s = ((1 - c_s) * s) + (sqrt_s * z_prime)
                     M = (
                         ((1 - 0.5 * c_1 - 0.5 * c_mu) * M)
                         + ((0.5 * c_1) * M.dot(s).dot(s.T))
@@ -449,11 +469,12 @@ class MAES:
                     )
                     sigma = sigma * np.exp(c_s / d_s * (np.linalg.norm(s) / echi - 1))
 
+
                 state.update(
                     problem,
-                    Solution(f[idx[0]], X[:, idx[0]].copy()),
-                    Solution((weights.w * f[mu_best]).sum(), x.copy()),
-                    sigma,
+                    Solution(f[idx_min], X[:, idx_min].copy()),
+                    Solution((weights.w * f[mu_best]).sum(), x_prime.copy()),
+                    np.mean(sigma),
                     f,
                 )
 
@@ -480,7 +501,7 @@ class ARSV1:
 
         state = State(self.data_folder, self.test_gen, self.lambda_ * 2)
         try:
-            while self.budget > state.counter * self.lambda_ * 2:
+            while self.budget > (state.counter * self.lambda_ * 2):
                 delta = np.random.normal(size=(self.n, self.lambda_))
 
                 neg = m - (self.eta * delta)
@@ -492,7 +513,8 @@ class ARSV1:
                 best_rewards = np.maximum(neg_reward, pos_reward)
                 idx = np.argsort(best_rewards)[::-1]
 
-                sigma_rewards = np.r_[neg_reward, pos_reward].std()
+                f = np.r_[neg_reward, pos_reward]
+                sigma_rewards = f.std()
                 weight = self.sigma0 / (self.lambda_ * sigma_rewards)
 
                 delta_rewards = pos_reward - neg_reward
@@ -509,6 +531,7 @@ class ARSV1:
                     Solution(-best_rewards[best_idx],  best.copy()),
                     Solution(-np.mean(best_rewards), m.copy()),
                     sigma_rewards,
+                    f
                 )
         except KeyboardInterrupt:
             pass

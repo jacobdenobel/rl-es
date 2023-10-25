@@ -11,18 +11,29 @@ from objective import Objective
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
 
 ENVS = (
-    "LunarLander-v2",
-    "BipedalWalker-v3",
     "CartPole-v1",
     "Acrobot-v1",
     "MountainCar-v0",
+    "LunarLander-v2",
+    "BipedalWalker-v3",
 )
+
+BUDGETS = (
+    500,       # Cartpole
+    1000,       # Acrobot
+    1000,       # MountainCar
+    10_000,     # LunarLander
+    20_000      # Walker
+)
+
+
+STRATEGIES = ("maes", "dr1", "ars-v1", "csa", "dr2")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--budget", default=10_000, help="Number of fitness evaluations", type=int
+        "--budget", default=None, help="Number of fitness evaluations", type=int
     )
     parser.add_argument(
         "--seed", default=42, help="Set seed for reproducibility", type=int
@@ -52,6 +63,17 @@ if __name__ == "__main__":
         default=None,
     )
     parser.add_argument(
+        "--mu",
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
+        "--lamb",
+        type=int,
+        default=None,
+    )
+
+    parser.add_argument(
         "--n_hidden",
         help="Number of hidden units in layer of the neural network (only used if n_layers > 2)",
         type=int,
@@ -64,19 +86,21 @@ if __name__ == "__main__":
     parser.add_argument("--normalized", action="store_true")
     parser.add_argument("--uncertainty_handled", action="store_true")
     parser.add_argument(
-        "--initialization", type=str, choices=("zero", "uniform", "gauss"), default="zero"
+        "--initialization",
+        type=str,
+        choices=("zero", "uniform", "gauss"),
+        default="zero",
     )
-    parser.add_argument(
-        "--strategy", type=str, choices=("maes", "dr1", "ars-v1", "csa", "dr2"), default="csa"
-    )
+    parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="csa")
 
     parser.add_argument("--env_name", type=str, default="LunarLander-v2", choices=ENVS)
-    parser.add_argument("--single_episode_per_eval", action="store_true")
+    parser.add_argument("--eval_total_timesteps", action="store_false")
     parser.add_argument(
         "--play",
         type=str,
         default=None,
     )
+    
     args = parser.parse_args()
 
     t = time.time()
@@ -88,6 +112,8 @@ if __name__ == "__main__":
     if args.n_timesteps is None:
         args.n_timesteps = spec.max_episode_steps
 
+    if args.budget is None:
+        args.budget = BUDGETS[ENVS.index(args.env_name)]
 
     print(args)
     print(spec)
@@ -101,8 +127,8 @@ if __name__ == "__main__":
         env_name=args.env_name,
         normalized=args.normalized,
         no_bias=not args.with_bias,
-        single_episode_per_eval=args.single_episode_per_eval,
-        n_test_episodes=args.n_test_episodes
+        single_episode_per_eval=args.eval_total_timesteps,
+        n_test_episodes=args.n_test_episodes,
     )
     plot = True
     data_folder = f"{DATA}/{args.env_name}/{args.strategy}/{t}"
@@ -112,44 +138,54 @@ if __name__ == "__main__":
             optimizer = MAES(
                 obj.n,
                 args.budget,
+                mu=args.mu, 
+                lambda_=args.lamb,
                 data_folder=data_folder,
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
-                test_gen=args.test_every_nth_iteration
+                test_gen=args.test_every_nth_iteration,
             )
         elif args.strategy == "dr1":
             optimizer = DR1(
                 obj.n,
                 args.budget,
+                mu=args.mu, 
+                lambda_=args.lamb,
                 data_folder=data_folder,
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
-                test_gen=args.test_every_nth_iteration
+                test_gen=args.test_every_nth_iteration,
             )
         elif args.strategy == "dr2":
             optimizer = DR2(
                 obj.n,
                 args.budget,
+                mu=args.mu, 
+                lambda_=args.lamb,
                 data_folder=data_folder,
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
-                test_gen=args.test_every_nth_iteration
+                test_gen=args.test_every_nth_iteration,
             )
         elif args.strategy == "csa":
             optimizer = CSA(
                 obj.n,
                 args.budget,
+                mu=args.mu, 
+                lambda_=args.lamb,
                 data_folder=data_folder,
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
-                test_gen=args.test_every_nth_iteration
+                test_gen=args.test_every_nth_iteration,
             )
 
         elif args.strategy == "ars-v1":
-            optimizer = ARSV1(args.budget, 
-                              data_folder=data_folder,
-                              test_gen=args.test_every_nth_iteration
-                            )
+            optimizer = ARSV1(
+                obj.n,
+                args.budget,
+                data_folder=data_folder,
+                test_gen=args.test_every_nth_iteration,
+            )
         else:
             raise ValueError()
 
@@ -170,8 +206,10 @@ if __name__ == "__main__":
         best = np.load(os.path.join(args.play, "best.npy"))
         mean = np.load(os.path.join(args.play, "mean.npy"))
         plot = False
+    
+    # best_test = obj.play(best, data_folder, "best", plot)
+    # print("Test with best x (median max):", best_test)
+    # mean_test = obj.play(mean, data_folder, "mean", plot)
+    # print("Test with mean x (median max):", mean_test)
 
-    best_test = obj.play(best, data_folder, "best", plot)
-    print("Test with best x (avg max):", best_test)
-    mean_test = obj.play(mean, data_folder, "mean", plot)
-    print("Test with mean x (avg max):", mean_test)
+    time.sleep(1)

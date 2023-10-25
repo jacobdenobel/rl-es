@@ -159,40 +159,44 @@ class Objective:
         self.net.set_weights(x)
 
         returns = []
-        for episode_index in range(self.n_test_episodes):
-            env = gym.make(self.env_name, render_mode=render_mode)
+        try:
+            for episode_index in range(self.n_test_episodes):
+                env = gym.make(self.env_name, render_mode=render_mode)
 
-            observation, *_ = env.reset()
-            if render_mode == "human":
-                env.render()
-            done = False
-            ret = 0
-            step_index = 0
-            while not done:
-                action, *_ = self.net(self.normalizer(observation.reshape(1, -1)))
-                observation, reward, terminated, truncated, *_ = env.step(action)
-                done = terminated or truncated
-                ret += reward
+                observation, *_ = env.reset()
                 if render_mode == "human":
-                    print(f"step {step_index}, return {ret: .3f} {' ' * 25}", end="\r")
-                step_index += 1
-            if render_mode == "human":
-                print()
-            if render_mode == "rgb_array_list" and episode_index == 0:
-                os.makedirs(f"{data_folder}/videos", exist_ok=True)
-                with redirect_stdout(io.StringIO()):
-                    save_video(
-                        env.render(),
-                        f"{data_folder}/videos",
-                        fps=env.metadata["render_fps"],
-                        step_starting_index=0,
-                        episode_index=0,
-                        name_prefix=name,
-                    )
-                os.makedirs(f"{data_folder}/policies", exist_ok=True)
-                np.save(f"{data_folder}/policies/{name}.pkl", x)
-                render_mode = None
-            returns.append(ret)
+                    env.render()
+                done = False
+                ret = 0
+                step_index = 0
+                while not done:
+                    action, *_ = self.net(self.normalizer(observation.reshape(1, -1)))
+                    observation, reward, terminated, truncated, *_ = env.step(action)
+                    done = terminated or truncated
+                    ret += reward
+                    if render_mode == "human":
+                        print(f"step {step_index}, return {ret: .3f} {' ' * 25}", end="\r")
+                    step_index += 1
+                if render_mode == "human":
+                    print()
+                if render_mode == "rgb_array_list" and episode_index == 0:
+                    os.makedirs(f"{data_folder}/videos", exist_ok=True)
+                    with redirect_stdout(io.StringIO()):
+                        save_video(
+                            env.render(),
+                            f"{data_folder}/videos",
+                            fps=env.metadata["render_fps"],
+                            step_starting_index=0,
+                            episode_index=0,
+                            name_prefix=name,
+                        )
+                    os.makedirs(f"{data_folder}/policies", exist_ok=True)
+                    np.save(f"{data_folder}/policies/{name}.pkl", x)
+                    render_mode = None
+                returns.append(ret)
+        except KeyboardInterrupt:
+            pass
+        finally:
             env.close()
         if plot:
             plt.figure()
