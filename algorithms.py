@@ -247,7 +247,6 @@ class DR1:
         
         try:
             while self.budget > state.used_budget:
-                
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
@@ -258,6 +257,7 @@ class DR1:
                 f = problem(X)
 
                 idx, f = uch.update(problem, f, X, self.n, self.lambda_, state)
+
                 mu_best = idx[: self.mu]
                 idx_min = idx[0]
 
@@ -532,7 +532,7 @@ class ARSV1:
 
         state = State(self.data_folder, self.test_gen, self.lambda_ * 2)
         try:
-            while self.budget > (state.counter * self.lambda_ * 2):
+            while self.budget > state.used_budget:
                 delta = np.random.normal(size=(self.n, self.lambda_))
 
                 neg = m - (self.eta * delta)

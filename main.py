@@ -73,7 +73,11 @@ if __name__ == "__main__":
         type=int,
         default=None,
     )
-
+    parser.add_argument(
+        "--sigma0",
+        type=float,
+        default=1.0,
+    )
     parser.add_argument(
         "--n_hidden",
         help="Number of hidden units in layer of the neural network (only used if n_layers > 2)",
@@ -155,6 +159,7 @@ if __name__ == "__main__":
                 args.budget,
                 mu=args.mu, 
                 lambda_=args.lamb,
+                sigma0=args.sigma0,
                 data_folder=data_folder,
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
@@ -165,6 +170,7 @@ if __name__ == "__main__":
             optimizer = DR1(
                 obj.n,
                 args.budget,
+                sigma0=args.sigma0,
                 mu=args.mu, 
                 lambda_=args.lamb,
                 data_folder=data_folder,
@@ -177,6 +183,7 @@ if __name__ == "__main__":
             optimizer = DR2(
                 obj.n,
                 args.budget,
+                sigma0=args.sigma0,
                 mu=args.mu, 
                 lambda_=args.lamb,
                 data_folder=data_folder,
@@ -189,6 +196,7 @@ if __name__ == "__main__":
             optimizer = CSA(
                 obj.n,
                 args.budget,
+                sigma0=args.sigma0,
                 mu=args.mu, 
                 lambda_=args.lamb,
                 data_folder=data_folder,

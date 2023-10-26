@@ -18,8 +18,10 @@ for env in ["LunarLander-v2"]:
                 "--seed",
                 str(seed),
                 "--eval_total_timesteps",
-                "--mirrored"
-                
+                "--lamb",
+                str(32),
+                "--sigma0",
+                "0.03"                
             ], start_new_session=True)
             time.sleep(1)
 
