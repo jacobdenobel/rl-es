@@ -17,8 +17,6 @@ for env in ["LunarLander-v2"]:
                 "--seed",
                 str(seed),
                 "--eval_total_timesteps",
-                "--n_timesteps",
-                str(400)                
             ])
 
 

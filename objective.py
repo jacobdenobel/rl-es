@@ -163,6 +163,7 @@ class Objective:
                 returns.append(np.median(np.hstack(episodic_returns[i:j+1])))
         else:
             returns = [np.median(e) if any(e) else 0 for e in episodic_returns]
+            
         returns = np.array(returns)
         return -returns
 
