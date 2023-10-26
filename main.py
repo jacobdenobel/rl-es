@@ -142,7 +142,7 @@ if __name__ == "__main__":
         no_bias=not args.with_bias,
         single_episode_per_eval=args.eval_total_timesteps,
         n_test_episodes=args.n_test_episodes,
-        store_video=args.store_video
+        store_video=args.store_videos
     )
     plot = True
     uh = ''
