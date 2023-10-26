@@ -28,7 +28,7 @@ BUDGETS = (
 
 
 
-STRATEGIES = ("maes", "dr1", "ars-v1", "csa", "dr2")
+STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars-v1",)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
