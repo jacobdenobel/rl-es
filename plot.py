@@ -114,5 +114,5 @@ if __name__ == "__main__":
     for env in envs:
         if env == "old": continue
         env_dir = os.path.join("data", env)
-        plot_x_final(env_dir)
+#        plot_x_final(env_dir)
         plot_all_strats_for_env(env_dir)
