@@ -22,7 +22,7 @@ BUDGETS = (
     500,        # Cartpole
     1000,       # Acrobot
     5000,       # MountainCar
-    10_000,     # LunarLander
+    5_000,     # LunarLander
     20_000      # Walker
 )
 
