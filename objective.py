@@ -70,31 +70,35 @@ class Objective:
         return np.array([self.eval_sequential(xi) for xi in x.T])
 
     def eval_sequential(self, x):
-        assert False
         envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
         observations, _ = envs.reset()
         self.net.set_weights(x)
 
-        returns = np.zeros(self.n_episodes)
-        collect_reward = np.ones(self.n_episodes , dtype=int)
+        collect_reward = np.ones(self.n_episodes, dtype=int)
+        episodic_return = np.zeros(self.n_episodes)
+        episodic_returns = []
+
         for _ in range(self.n_timesteps):
             actions = self.net(self.normalizer(observations))
             observations, rewards, dones, trunc, *_ = envs.step(actions)
             rewards *= collect_reward
             rewards = self.fix_reward(rewards, dones)
-            returns += rewards
+            episodic_return += rewards
             self.n_train_timesteps += 1
 
             finished_episodes = np.logical_or(dones, trunc)
-            if self.single_episode_per_eval and any(finished_episodes):
-                collect_reward = (collect_reward - finished_episodes).clip(0)
+            if any(finished_episodes):
+                if self.single_episode_per_eval:
+                    collect_reward = (collect_reward - finished_episodes).clip(0)
+
+                episodic_returns.extend(episodic_return[finished_episodes])  
+                self.n_train_episodes += 1
 
             if not any(collect_reward):
                 break
 
-        self.n_train_episodes += self.n_episodes
-        return -np.median(returns)
-
+        return -np.median(episodic_returns)
+    
     def eval_parallel(self, x):
         n = x.shape[1]
 
@@ -162,7 +166,7 @@ class Objective:
             for i, j in np.arange(self.n_episodes * n).reshape(n, self.n_episodes):
                 returns.append(np.median(np.hstack(episodic_returns[i:j+1])))
         else:
-            returns = [np.median(e) if any(e) else 0 for e in episodic_returns]
+            returns = [np.median(e) for e in episodic_returns]
             
         returns = np.array(returns)
         return -returns

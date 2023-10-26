@@ -85,6 +85,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--with_bias", action="store_true")
     parser.add_argument("--normalized", action="store_true")
+    parser.add_argument("--mirrored", action="store_true")
     parser.add_argument("--uncertainty_handled", action="store_true")
     parser.add_argument(
         "--initialization",
@@ -99,6 +100,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--play",
         type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--revaluate_best_after",
+        type=int,
         default=None,
     )
     
@@ -135,7 +141,12 @@ if __name__ == "__main__":
     uh = ''
     if args.uncertainty_handled:
         uh = 'UH-'
-    data_folder = f"{DATA}/{args.env_name}/{uh}{args.strategy}/{t}"
+
+    mirrored = ''
+    if args.mirrored and args.strategy != "ars-v1":
+        mirrored = "-mirrored"
+
+    data_folder = f"{DATA}/{args.env_name}/{uh}{args.strategy}{mirrored}/{t}"
     if args.play is None:
         os.makedirs(data_folder)
         if args.strategy == "maes":
@@ -148,6 +159,7 @@ if __name__ == "__main__":
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
                 test_gen=args.test_every_nth_iteration,
+                mirrored=args.mirrored
             )
         elif args.strategy == "dr1":
             optimizer = DR1(
@@ -159,6 +171,7 @@ if __name__ == "__main__":
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
                 test_gen=args.test_every_nth_iteration,
+                mirrored=args.mirrored
             )
         elif args.strategy == "dr2":
             optimizer = DR2(
@@ -170,6 +183,7 @@ if __name__ == "__main__":
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
                 test_gen=args.test_every_nth_iteration,
+                mirrored=args.mirrored
             )
         elif args.strategy == "csa":
             optimizer = CSA(
@@ -181,6 +195,7 @@ if __name__ == "__main__":
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
                 test_gen=args.test_every_nth_iteration,
+                mirrored=args.mirrored
             )
 
         elif args.strategy == "ars-v1":

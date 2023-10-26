@@ -49,7 +49,7 @@ class Logger:
 
 
 class State:
-    def __init__(self, data_folder, test_gen, lamb):
+    def __init__(self, data_folder, test_gen, lamb, revaluate_best_after: int = None):
         self.counter = 0
         self.best = Solution()
         self.mean = Solution()
@@ -63,6 +63,8 @@ class State:
         self.mean_test = None
         self.best_test = None
         self.used_budget = 0
+        self.time_since_best_update = 0
+        self.revaluate_best_every = revaluate_best_after
 
     def update(
         self,
@@ -73,7 +75,12 @@ class State:
         f: np.ndarray
     ) -> None:
         self.counter += 1
+        self.time_since_best_update += 1
         self.used_budget += len(f)
+
+        if self.revaluate_best_every is not None and self.revaluate_best_every < self.time_since_best_update:
+            self.time_since_best_update = 0
+            self.best.y = problem.eval_sequential(self.best.x)
 
         toc = time.perf_counter()
         dt = toc - self.tic
@@ -81,6 +88,7 @@ class State:
 
         if best_offspring.y < self.best.y:
             self.best = best_offspring
+            self.time_since_best_update = 0 
         self.mean = mean
 
         n_evals = self.counter * self.lamb
@@ -206,12 +214,14 @@ class DR1:
     budget: int = 25_000
     mu: int = None
     lambda_: int = None
-    sigma0: float = 1
+    sigma0: float = .5
     verbose: bool = True
     test_gen: int = 25
     initialization: str = "zero"
     data_folder: str = None
     uncertainty_handling: bool = False
+    mirrored: bool = True
+    revaluate_best_after: int = None
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
@@ -229,13 +239,19 @@ class DR1:
 
         x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
 
-        state = State(self.data_folder, self.test_gen, self.lambda_)
+        state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
         weights = WeightedRecombination(self.mu, self.lambda_)
 
+        n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
+        
         try:
             while self.budget > state.used_budget:
-                Z = np.random.normal(size=(self.n, self.lambda_))
+                
+                Z = np.random.normal(size=(self.n, n_samples))
+                if self.mirrored:
+                    Z = np.hstack([Z, -Z])
+
                 zeta_i = np.random.choice(zeta, (1, self.lambda_))
                 Y = (zeta_i * (sigma * Z))
                 X = x_prime + Y
@@ -275,12 +291,14 @@ class DR2:
     budget: int = 25_000
     mu: int = None
     lambda_: int = None
-    sigma0: float = 1
+    sigma0: float = .5
     verbose: bool = True
     test_gen: int = 25
     initialization: str = "zero"
     data_folder: str = None
     uncertainty_handling: bool = False
+    mirrored: bool = True
+    revaluate_best_after: int = None
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
@@ -305,12 +323,14 @@ class DR2:
         weights = WeightedRecombination(self.mu, self.lambda_)
         x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
 
-        state = State(self.data_folder, self.test_gen, self.lambda_)
+        state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
-
+        n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
             while self.budget > state.used_budget:
-                Z = np.random.normal(size=(self.n, self.lambda_))
+                Z = np.random.normal(size=(self.n, n_samples))
+                if self.mirrored:
+                    Z = np.hstack([Z, -Z])
                 Y = sigma * (sigma_local * Z)
                 X = x_prime + Y
                 f = problem(X)
@@ -355,6 +375,8 @@ class CSA:
     initialization: str = "zero"
     data_folder: str = None
     uncertainty_handling: bool = False
+    mirrored: bool = True
+    revaluate_best_after: int = None
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
@@ -377,11 +399,14 @@ class CSA:
         sigma = self.sigma0
         s = np.ones((self.n, 1))
 
-        state = State(self.data_folder, self.test_gen, self.lambda_)
+        state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
+        n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
             while self.budget > state.used_budget:
-                Z = np.random.normal(0, 1, (self.n, self.lambda_))
+                Z = np.random.normal(size=(self.n, n_samples))
+                if self.mirrored:
+                    Z = np.hstack([Z, -Z])
                 X = x_prime + (sigma * Z)
                 f = problem(X)
 
@@ -422,6 +447,8 @@ class MAES:
     initialization: str = "zero"
     data_folder: str = None
     uncertainty_handling: bool = False
+    mirrored: bool = True
+    revaluate_best_after: int = None
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
@@ -445,11 +472,14 @@ class MAES:
         M = np.eye(self.n)
         s = np.ones((self.n, 1))
 
-        state = State(self.data_folder, self.test_gen, self.lambda_)
+        state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
+        n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
             while self.budget > state.used_budget:
-                Z = np.random.normal(0, 1, (self.n, self.lambda_))
+                Z = np.random.normal(size=(self.n, n_samples))
+                if self.mirrored:
+                    Z = np.hstack([Z, -Z])
                 D = M.dot(Z)
                 X = x_prime + (sigma * D)
                 f = problem(X)
