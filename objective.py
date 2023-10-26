@@ -70,6 +70,7 @@ class Objective:
         return np.array([self.eval_sequential(xi) for xi in x.T])
 
     def eval_sequential(self, x):
+        assert False
         envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
         observations, _ = envs.reset()
         self.net.set_weights(x)
@@ -116,15 +117,17 @@ class Objective:
 
         observations, *_ = self.envs.reset()
 
-        returns = np.zeros((n, self.n_episodes))
         action_shape = self.n_episodes * n
         if self.n_actions > 1:
             action_shape = (action_shape, self.n_actions)
 
         actions = np.ones(action_shape, dtype=int)
-
         collect_reward = np.ones(self.n_episodes * n, dtype=int)
 
+        total_returns = np.zeros((n, self.n_episodes))
+        episodic_return = np.zeros((n * self.n_episodes))
+        episodic_returns = [[] for _ in range(self.n_episodes * n)]
+        
         for t in range(self.n_timesteps):
             for i, net in enumerate(self.nets):
                 idx = i * self.n_episodes
@@ -137,16 +140,32 @@ class Objective:
             self.n_train_timesteps += collect_reward.sum()
 
             rewards = self.fix_reward(rewards, dones)
-            returns += rewards.reshape(n, self.n_episodes)
+            total_returns += rewards.reshape(n, self.n_episodes)
+            episodic_return += rewards
             
             finished_episodes = np.logical_or(dones, trunc)
-            if self.single_episode_per_eval and any(finished_episodes):
-                collect_reward = (collect_reward - finished_episodes).clip(0)
+            if any(finished_episodes):
+                if self.single_episode_per_eval:
+                    collect_reward = (collect_reward - finished_episodes).clip(0)
+
+                idx, *_ = np.where(finished_episodes)
+                for i in idx:
+                    episodic_returns[i].append(episodic_return[i])
+                    episodic_return[i] = 0
+                    self.n_train_episodes += 1
 
             if not any(collect_reward):
                 break
-        self.n_train_episodes += self.n_episodes * n
-        return -np.median(returns, axis=1)
+
+        returns = []
+        if self.n_episodes != 1:
+            for i, j in np.arange(self.n_episodes * n).reshape(n, self.n_episodes):
+                returns.append(np.median(np.hstack(episodic_returns[i:j+1])))
+        else:
+            returns = [np.median(e) if any(e) else 0 for e in episodic_returns]
+        returns = np.array(returns)
+        return -returns
+
 
     def fix_reward(self, rewards, dones):
         if self.env_name == "CartPole-v1":
@@ -173,6 +192,7 @@ class Objective:
                     action, *_ = self.net(self.normalizer(observation.reshape(1, -1)))
                     observation, reward, terminated, truncated, *_ = env.step(action)
                     done = terminated or truncated
+                    reward = self.fix_reward(reward, terminated)
                     ret += reward
                     if render_mode == "human":
                         print(f"step {step_index}, return {ret: .3f} {' ' * 25}", end="\r")

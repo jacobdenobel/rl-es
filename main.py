@@ -19,12 +19,13 @@ ENVS = (
 )
 
 BUDGETS = (
-    500,       # Cartpole
+    500,        # Cartpole
     1000,       # Acrobot
-    1000,       # MountainCar
+    5000,       # MountainCar
     10_000,     # LunarLander
     20_000      # Walker
 )
+
 
 
 STRATEGIES = ("maes", "dr1", "ars-v1", "csa", "dr2")
@@ -131,7 +132,10 @@ if __name__ == "__main__":
         n_test_episodes=args.n_test_episodes,
     )
     plot = True
-    data_folder = f"{DATA}/{args.env_name}/{args.strategy}/{t}"
+    uh = ''
+    if args.uncertainty_handled:
+        uh = 'UH-'
+    data_folder = f"{DATA}/{args.env_name}/{uh}{args.strategy}/{t}"
     if args.play is None:
         os.makedirs(data_folder)
         if args.strategy == "maes":

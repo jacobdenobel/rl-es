@@ -62,6 +62,7 @@ class State:
         self.lamb: int = lamb
         self.mean_test = None
         self.best_test = None
+        self.used_budget = 0
 
     def update(
         self,
@@ -72,6 +73,8 @@ class State:
         f: np.ndarray
     ) -> None:
         self.counter += 1
+        self.used_budget += len(f)
+
         toc = time.perf_counter()
         dt = toc - self.tic
         self.tic = toc
@@ -132,7 +135,7 @@ class UncertaintyHandling:
     targetnoise: float = 0.12
     S: float = 0.12
 
-    def update(self, problem, f, X, n, lambda_):
+    def update(self, problem, f, X, n, lambda_, state: State):
         idx = np.argsort(f)
         self.update_timer -= 1
         if self.active and self.update_timer <= 0:
@@ -147,6 +150,7 @@ class UncertaintyHandling:
             fu[i2] = np.median(
                 [problem.eval_sequential(X[:, i1]) for _ in range(self.averaging)]
             )
+            state.used_budget += self.averaging * 2
 
             idx2 = np.argsort(fu)
 
@@ -230,24 +234,22 @@ class DR1:
         weights = WeightedRecombination(self.mu, self.lambda_)
 
         try:
-            while self.budget > state.counter * self.lambda_:
+            while self.budget > state.used_budget:
                 Z = np.random.normal(size=(self.n, self.lambda_))
                 zeta_i = np.random.choice(zeta, (1, self.lambda_))
                 Y = (zeta_i * (sigma * Z))
                 X = x_prime + Y
                 f = problem(X)
 
-                idx, f = uch.update(problem, f, X, self.n, self.lambda_)
+                idx, f = uch.update(problem, f, X, self.n, self.lambda_, state)
                 mu_best = idx[: self.mu]
                 idx_min = idx[0]
 
+                y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
+                x_prime = x_prime + y_prime
+                z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * np.sqrt(weights.mueff)
                 if uch.should_update():
-                    y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
-                    x_prime = x_prime + y_prime
-
-                    z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * np.sqrt(weights.mueff)
                     zeta_w = np.sum(zeta_i[:, mu_best] * weights.w)
-
                     zeta_sel = np.exp(z_prime - root_pi)
                     sigma *= (
                         np.power(zeta_w, beta) * np.power(zeta_sel, beta_scale)
@@ -307,23 +309,21 @@ class DR2:
         uch = UncertaintyHandling(self.uncertainty_handling)
 
         try:
-            while self.budget > state.counter * self.lambda_:
+            while self.budget > state.used_budget:
                 Z = np.random.normal(size=(self.n, self.lambda_))
                 Y = sigma * (sigma_local * Z)
                 X = x_prime + Y
                 f = problem(X)
 
-                idx, f = uch.update(problem, f, X, self.n, self.lambda_)
+                idx, f = uch.update(problem, f, X, self.n, self.lambda_, state)
                 mu_best = idx[: self.mu]
                 idx_min = idx[0]
 
+                z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * np.sqrt(weights.mueff)
+                y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
+                x_prime = x_prime + y_prime
+                zeta = ((1 - c) * zeta) + (c * z_prime)
                 if uch.should_update():
-                    z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * np.sqrt(weights.mueff)
-                    # z_prime = Z[:, idx_min].reshape(-1, 1)
-                    y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
-                    x_prime = x_prime + y_prime
-
-                    zeta = ((1 - c) * zeta) + (c * z_prime)
                     sigma = sigma * np.power(
                         np.exp((np.linalg.norm(zeta) / c2) - c3), beta
                     )
@@ -380,18 +380,19 @@ class CSA:
         state = State(self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         try:
-            while self.budget > state.counter * self.lambda_:
+            while self.budget > state.used_budget:
                 Z = np.random.normal(0, 1, (self.n, self.lambda_))
                 X = x_prime + (sigma * Z)
                 f = problem(X)
 
-                idx, f = uch.update(problem, f, X, self.n, self.lambda_)
+                idx, f = uch.update(problem, f, X, self.n, self.lambda_, state)
                 mu_best = idx[: self.mu]
                 idx_min = idx[0]
+                z_prime = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
+                x_prime = x_prime + (sigma * z_prime)
+                s = ((1 - c_s) * s) + (sqrt_s * z_prime)
+
                 if uch.should_update():
-                    z_prime = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
-                    x_prime = x_prime + (sigma * z_prime)
-                    s = ((1 - c_s) * s) + (sqrt_s * z_prime)
                     sigma = sigma * np.exp(c_s / d_s * (np.linalg.norm(s) / echi - 1))
 
                 state.update(
@@ -447,21 +448,21 @@ class MAES:
         state = State(self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         try:
-            while self.budget > state.counter * self.lambda_:
+            while self.budget > state.used_budget:
                 Z = np.random.normal(0, 1, (self.n, self.lambda_))
                 D = M.dot(Z)
                 X = x_prime + (sigma * D)
                 f = problem(X)
 
-                idx, f = uch.update(problem, f, X, self.n, self.lambda_)
+                idx, f = uch.update(problem, f, X, self.n, self.lambda_, state)
                 mu_best = idx[: self.mu]
                 idx_min = idx[0]
+                z_prime = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
+                d_prime = np.sum(weights.w * D[:, mu_best], axis=1, keepdims=True)
+                x_prime = x_prime + (sigma * d_prime)
+                s = ((1 - c_s) * s) + (sqrt_s * z_prime)
 
                 if uch.should_update():
-                    z_prime = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
-                    d_prime = np.sum(weights.w * D[:, mu_best], axis=1, keepdims=True)
-                    x_prime = x_prime + (sigma * d_prime)
-                    s = ((1 - c_s) * s) + (sqrt_s * z_prime)
                     M = (
                         ((1 - 0.5 * c_1 - 0.5 * c_mu) * M)
                         + ((0.5 * c_1) * M.dot(s).dot(s.T))
