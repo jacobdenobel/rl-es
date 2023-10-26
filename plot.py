@@ -92,7 +92,10 @@ def plot_x_final(env_folder):
             if not os.path.isdir(policy_folder):
                 continue
             
-            policy = sorted(os.listdir(policy_folder))[-1]
+            policy, *_ = sorted(
+                [x for x in os.listdir(policy_folder) if "mean" in x],
+                key=lambda x: -int(x.split("-")[1])
+            )
             policy_vector = np.load(os.path.join(policy_folder, policy))
             means.append(policy_vector.ravel())
 
@@ -111,4 +114,4 @@ if __name__ == "__main__":
     for env in envs:
         env_dir = os.path.join("data", env)
         plot_x_final(env_dir)
-        # plot_all_strats_for_env(env_dir)
+        plot_all_strats_for_env(env_dir)
