@@ -77,7 +77,38 @@ def plot_all_strats_for_env(env_folder, dt=500):
     #plt.show()
 
 
+def plot_x_final(env_folder):
+    
+
+    for strat, color in zip(os.listdir(env_folder), colors.TABLEAU_COLORS):
+        means = []
+        for i, (run) in enumerate(os.listdir(os.path.join(env_folder, strat))):
+            path = os.path.join(env_folder, strat, run)
+            stats = pd.read_csv(os.path.join(path, "stats.csv"), skipinitialspace=True)
+            with open(os.path.join(path, "settings.json")) as f:
+                meta = json.load(f)
+            
+            policy_folder = os.path.join(path, "policies")
+            if not os.path.isdir(policy_folder):
+                continue
+            
+            policy = sorted(os.listdir(policy_folder))[-1]
+            policy_vector = np.load(os.path.join(policy_folder, policy))
+            means.append(policy_vector.ravel())
+
+        plt.plot(np.mean(means, axis=0), label=strat)
+
+    plt.legend()
+    plt.grid()
+    plt.savefig(meta['env_name'] + "coordinates.png")
+             
+
+
+
+
 if __name__ == "__main__":
     envs = os.listdir("data")
     for env in envs:
-        plot_all_strats_for_env(os.path.join("data", env))
+        env_dir = os.path.join("data", env)
+        plot_x_final(env_dir)
+        # plot_all_strats_for_env(env_dir)

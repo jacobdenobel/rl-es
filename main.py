@@ -55,7 +55,7 @@ if __name__ == "__main__":
         "--test_every_nth_iteration",
         help="Number of episodes to play in the fitness function",
         type=int,
-        default=25,
+        default=5,
     )
     parser.add_argument(
         "--n_timesteps",
