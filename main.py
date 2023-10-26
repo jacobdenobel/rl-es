@@ -20,8 +20,8 @@ ENVS = (
 
 BUDGETS = (
     500,        # Cartpole
-    1000,       # Acrobot
-    5000,       # MountainCar
+    1_000,       # Acrobot
+    5_000,       # MountainCar
     5_000,     # LunarLander
     20_000      # Walker
 )
@@ -91,6 +91,7 @@ if __name__ == "__main__":
     parser.add_argument("--normalized", action="store_true")
     parser.add_argument("--mirrored", action="store_true")
     parser.add_argument("--uncertainty_handled", action="store_true")
+    parser.add_argument("--store_videos", action="store_true")
     parser.add_argument(
         "--initialization",
         type=str,
@@ -111,6 +112,7 @@ if __name__ == "__main__":
         type=int,
         default=None,
     )
+    
     
     args = parser.parse_args()
 
@@ -140,6 +142,7 @@ if __name__ == "__main__":
         no_bias=not args.with_bias,
         single_episode_per_eval=args.eval_total_timesteps,
         n_test_episodes=args.n_test_episodes,
+        store_video=args.store_video
     )
     plot = True
     uh = ''

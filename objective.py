@@ -27,6 +27,7 @@ class Objective:
     normalized: bool = True
     no_bias: bool = False
     single_episode_per_eval: bool = True
+    store_video: bool = True
 
     def __post_init__(self):
         self.envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
@@ -204,7 +205,7 @@ class Objective:
                     step_index += 1
                 if render_mode == "human":
                     print()
-                if render_mode == "rgb_array_list" and episode_index == 0:
+                if self.store_video and render_mode == "rgb_array_list" and episode_index == 0:
                     os.makedirs(f"{data_folder}/videos", exist_ok=True)
                     with redirect_stdout(io.StringIO()):
                         save_video(
