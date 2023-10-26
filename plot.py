@@ -29,8 +29,8 @@ def plot_whitebg(ax, time, y, label, color):
     )
 
 
-def plot_all_strats_for_env(env_folder, dt=10):
-    f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
+def plot_all_strats_for_env(env_folder, dt=500):
+    f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 10))
     time = None
     for strat, color in zip(os.listdir(env_folder), colors.TABLEAU_COLORS):
         means_best = []
@@ -45,12 +45,12 @@ def plot_all_strats_for_env(env_folder, dt=10):
                 meta = json.load(f)
 
             if time is None:
-                time = np.arange(0, meta["budget"], dt)
+                time = np.arange(0, meta["budget"] * meta['n_timesteps'], dt)
 
-            means_best.append(np.interp(time, stats.n_train_episodes, stats.best))
-            means_current.append(np.interp(time, stats.n_train_episodes, stats.current))
-            test_means_best.append(np.interp(time, stats.n_train_episodes, stats.best_test))
-            test_means_current.append(np.interp(time, stats.n_train_episodes, stats.current_test))
+            means_best.append(np.interp(time, stats.n_train_timesteps, stats.best))
+            means_current.append(np.interp(time, stats.n_train_timesteps, stats.current))
+            test_means_best.append(np.interp(time, stats.n_train_timesteps, stats.best_test))
+            test_means_current.append(np.interp(time, stats.n_train_timesteps, stats.current_test))
 
             ax1.plot(time, means_best[-1], color=color, alpha=0.2, zorder=-1)
             ax2.plot(time, means_current[-1], color=color, alpha=0.2, zorder=-1)
@@ -69,11 +69,12 @@ def plot_all_strats_for_env(env_folder, dt=10):
     ax4.set_title("mean return (test)")
     for ax in ax1, ax2, ax3, ax4:
         ax.set_ylabel("returns")
-        ax.set_xlabel("# train episodes")
+        ax.set_xlabel("# train timesteps")
         ax.legend()
         ax.grid()
     plt.suptitle((meta["env_name"]))
-    plt.show()
+    plt.savefig(meta['env_name'] + ".png")
+    #plt.show()
 
 
 if __name__ == "__main__":
