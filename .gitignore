@@ -3,3 +3,6 @@ data
 *pyc
 __pycache__/
 *.png
+*.ipynb
+.ipynb_checkpoints/
+
