@@ -85,6 +85,9 @@ class Objective:
         returns = []
         for i in range(self.n_episodes):
             returns.extend(self.calculate_returns(data_over_time[:, :, i]))
+
+        self.n_train_timesteps += self.n_timesteps * self.n_episodes
+        self.n_train_episodes += self.n_episodes
         return -self.aggregator(returns)
 
     def eval_parallel(self, x):
@@ -129,6 +132,13 @@ class Objective:
             for i in range(self.n_episodes):
                 returns.extend(self.calculate_returns(data_over_time[:, :, j + i]))
             aggregated_returns[k] = self.aggregator(returns)
+
+        if self.eval_total_timesteps:
+            self.n_train_timesteps += self.n_timesteps * self.n_episodes * n
+            self.n_train_episodes += self.n_episodes * n
+        else:
+            raise NotImplementedError()
+        
         return -aggregated_returns
 
     def calculate_returns(self, Y):

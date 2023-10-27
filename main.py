@@ -19,11 +19,11 @@ ENVS = (
 )
 
 BUDGETS = (
-    500,        # Cartpole
-    1_000,       # Acrobot
-    5_000,       # MountainCar
+    500,       # Cartpole
+    1_000,     # Acrobot
+    5_000,     # MountainCar
     5_000,     # LunarLander
-    20_000      # Walker
+    20_000     # Walker
 )
 
 

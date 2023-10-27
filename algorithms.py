@@ -76,7 +76,7 @@ class State:
 
     def update(
         self,
-        problem: Objective,
+        problem: Objective, 
         best_offspring: Solution,
         mean: Solution,
         sigma: float,
