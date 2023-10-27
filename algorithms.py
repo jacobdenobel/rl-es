@@ -292,7 +292,7 @@ class DR1:
                 x_prime = x_prime + y_prime
                 z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * np.sqrt(weights.mueff)
                 if uch.should_update():
-                    zeta_w = zeta_i[:, idx_min][0]
+                    zeta_w = np.sum(zeta_i[:, mu_best] * weights.w)
                     zeta_sel = np.exp(z_prime - root_pi)
                     sigma *= (
                         np.power(zeta_w, beta) * np.power(zeta_sel, beta_scale)
