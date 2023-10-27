@@ -185,20 +185,20 @@ class Objective:
                 if render_mode == "human":
                     print()
                 if (
-                    self.store_video
-                    and render_mode == "rgb_array_list"
+                    render_mode == "rgb_array_list"
                     and episode_index == 0
                 ):
-                    os.makedirs(f"{data_folder}/videos", exist_ok=True)
-                    with redirect_stdout(io.StringIO()):
-                        save_video(
-                            env.render(),
-                            f"{data_folder}/videos",
-                            fps=env.metadata["render_fps"],
-                            step_starting_index=0,
-                            episode_index=0,
-                            name_prefix=name,
-                        )
+                    if self.store_video:
+                        os.makedirs(f"{data_folder}/videos", exist_ok=True)
+                        with redirect_stdout(io.StringIO()):
+                            save_video(
+                                env.render(),
+                                f"{data_folder}/videos",
+                                fps=env.metadata["render_fps"],
+                                step_starting_index=0,
+                                episode_index=0,
+                                name_prefix=name,
+                            )
                     os.makedirs(f"{data_folder}/policies", exist_ok=True)
                     np.save(f"{data_folder}/policies/{name}.pkl", x)
                     render_mode = None
