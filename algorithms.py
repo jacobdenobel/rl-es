@@ -208,6 +208,21 @@ def init(dim, lb, ub, method="zero"):
         return np.random.normal(size=(dim, 1))
     raise ValueError()
 
+def init_lambda(n, method="n/2"):
+    """
+        range:      2*mu < lambda < 2*n + 10 
+        default:    4 + floor(3 * ln(n))     
+
+    """
+    if method == "default":
+        return (4 + np.floor(3 * np.log(n))).astype(int) 
+    
+    elif method == "n/2":
+        return np.floor(n / 2)
+    else:
+        raise ValueError()
+
+
 @dataclass
 class DR1:
     n: int
@@ -224,7 +239,7 @@ class DR1:
     revaluate_best_after: int = None
 
     def __post_init__(self):
-        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
+        self.lambda_ = self.lambda_ or init_lambda(self.n)
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
         self.mu = self.mu or self.lambda_ // 2
@@ -301,7 +316,7 @@ class DR2:
     revaluate_best_after: int = None
 
     def __post_init__(self):
-        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
+        self.lambda_ = self.lambda_ or init_lambda(self.n)
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
         self.mu = self.mu or self.lambda_ // 2
@@ -379,7 +394,7 @@ class CSA:
     revaluate_best_after: int = None
 
     def __post_init__(self):
-        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
+        self.lambda_ = self.lambda_ or init_lambda(self.n)
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
         self.mu = self.lambda_ // 2
@@ -451,7 +466,7 @@ class MAES:
     revaluate_best_after: int = None
 
     def __post_init__(self):
-        self.lambda_ = self.lambda_ or (4 + np.floor(3 * np.log(self.n))).astype(int)
+        self.lambda_ = self.lambda_ or init_lambda(self.n)
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
         self.mu = self.lambda_ // 2

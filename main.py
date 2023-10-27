@@ -101,7 +101,8 @@ if __name__ == "__main__":
     parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="csa")
 
     parser.add_argument("--env_name", type=str, default="LunarLander-v2", choices=ENVS)
-    parser.add_argument("--eval_total_timesteps", action="store_false")
+    parser.add_argument("--eval_total_timesteps", action="store_true")
+
     parser.add_argument(
         "--play",
         type=str,
@@ -140,7 +141,7 @@ if __name__ == "__main__":
         env_name=args.env_name,
         normalized=args.normalized,
         no_bias=not args.with_bias,
-        single_episode_per_eval=args.eval_total_timesteps,
+        eval_total_timesteps=args.eval_total_timesteps,
         n_test_episodes=args.n_test_episodes,
         store_video=args.store_videos
     )

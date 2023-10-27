@@ -26,7 +26,7 @@ class Objective:
     n_test_episodes: int = 10
     normalized: bool = True
     no_bias: bool = False
-    single_episode_per_eval: bool = True
+    eval_total_timesteps: bool = True
     store_video: bool = True
 
     def __post_init__(self):
@@ -35,12 +35,10 @@ class Objective:
             self.action_size = 4
             self.n_actions = 4
             self.last_activation = identity
-            self.collect_only_single_episode_reward = True
         else:
             self.action_size = self.envs.action_space[0].n
             self.last_activation = argmax
             self.n_actions = 1
-            self.collect_only_single_episode_reward = False
         self.state_size = self.envs.observation_space.shape[1]
 
         if self.normalized:
@@ -75,34 +73,21 @@ class Objective:
         observations, _ = envs.reset()
         self.net.set_weights(x)
 
-        collect_reward = np.ones(self.n_episodes, dtype=int)
-        episodic_return = np.zeros(self.n_episodes)
-        episodic_returns = []
-
-        for _ in range(self.n_timesteps):
+        data_over_time = np.empty((self.n_timesteps, 2, self.n_episodes))
+        for t in range(self.n_timesteps):
             actions = self.net(self.normalizer(observations))
             observations, rewards, dones, trunc, *_ = envs.step(actions)
-            rewards *= collect_reward
-            rewards = self.fix_reward(rewards, dones)
-            episodic_return += rewards
-            self.n_train_timesteps += 1
+            data_over_time[t] = np.vstack(
+                [self.fix_reward(rewards, dones), np.logical_or(dones, trunc)]
+            )
 
-            finished_episodes = np.logical_or(dones, trunc)
-            if any(finished_episodes):
-                if self.single_episode_per_eval:
-                    collect_reward = (collect_reward - finished_episodes).clip(0)
+        returns = []
+        for i in range(self.n_episodes):
+            returns.extend(self.calculate_returns(data_over_time[:, :, i]))
+        return -np.median(returns)
 
-                episodic_returns.extend(episodic_return[finished_episodes])  
-                self.n_train_episodes += 1
-
-            if not any(collect_reward):
-                break
-
-        return -np.median(episodic_returns)
-    
     def eval_parallel(self, x):
         n = x.shape[1]
-
         if n > len(self.nets):
             self.nets = [
                 Network(
@@ -121,18 +106,11 @@ class Objective:
             net.set_weights(w)
 
         observations, *_ = self.envs.reset()
-
-        action_shape = self.n_episodes * n
+        n_total_episodes = action_shape = self.n_episodes * n
         if self.n_actions > 1:
             action_shape = (action_shape, self.n_actions)
-
         actions = np.ones(action_shape, dtype=int)
-        collect_reward = np.ones(self.n_episodes * n, dtype=int)
-
-        total_returns = np.zeros((n, self.n_episodes))
-        episodic_return = np.zeros((n * self.n_episodes))
-        episodic_returns = [[] for _ in range(self.n_episodes * n)]
-        
+        data_over_time = np.empty((self.n_timesteps, 2, n_total_episodes))
         for t in range(self.n_timesteps):
             for i, net in enumerate(self.nets):
                 idx = i * self.n_episodes
@@ -140,38 +118,26 @@ class Objective:
                     self.normalizer(observations[idx : idx + self.n_episodes, :])
                 )
             observations, rewards, dones, trunc, *_ = self.envs.step(actions)
+            data_over_time[t] = np.vstack(
+                [self.fix_reward(rewards, dones), np.logical_or(dones, trunc)]
+            )
 
-            rewards *= collect_reward
-            self.n_train_timesteps += collect_reward.sum()
+        median_returns = np.empty(n)
+        for k, j in enumerate(range(0, n_total_episodes, self.n_episodes)):
+            returns = []
+            for i in range(self.n_episodes):
+                returns.extend(self.calculate_returns(data_over_time[:, :, j + i]))
+            median_returns[k] = np.median(returns)
+        return -median_returns
 
-            rewards = self.fix_reward(rewards, dones)
-            total_returns += rewards.reshape(n, self.n_episodes)
-            episodic_return += rewards
-            
-            finished_episodes = np.logical_or(dones, trunc)
-            if any(finished_episodes):
-                if self.single_episode_per_eval:
-                    collect_reward = (collect_reward - finished_episodes).clip(0)
-
-                idx, *_ = np.where(finished_episodes)
-                for i in idx:
-                    episodic_returns[i].append(episodic_return[i])
-                    episodic_return[i] = 0
-                    self.n_train_episodes += 1
-
-            if not any(collect_reward):
-                break
-
-        returns = []
-        if self.n_episodes != 1:
-            for i, j in np.arange(self.n_episodes * n).reshape(n, self.n_episodes):
-                returns.append(np.median(np.hstack(episodic_returns[i:j+1])))
-        else:
-            returns = [np.median(e) for e in episodic_returns]
-            
-        returns = np.array(returns)
-        return -returns
-
+    def calculate_returns(self, Y):
+        _, idx = np.unique(np.cumsum(Y[:, 1]) - Y[:, 1], return_index=True)
+        returns_ = [x.sum() for x in np.split(Y[:, 0], idx)[1:]]
+        if not self.eval_total_timesteps:
+            returns_ = returns_[:1]
+        
+        # TODO: we can remove incomplete episodes from the last optionally
+        return returns_
 
     def fix_reward(self, rewards, dones):
         if self.env_name == "CartPole-v1":
@@ -201,11 +167,17 @@ class Objective:
                     reward = self.fix_reward(reward, terminated)
                     ret += reward
                     if render_mode == "human":
-                        print(f"step {step_index}, return {ret: .3f} {' ' * 25}", end="\r")
+                        print(
+                            f"step {step_index}, return {ret: .3f} {' ' * 25}", end="\r"
+                        )
                     step_index += 1
                 if render_mode == "human":
                     print()
-                if self.store_video and render_mode == "rgb_array_list" and episode_index == 0:
+                if (
+                    self.store_video
+                    and render_mode == "rgb_array_list"
+                    and episode_index == 0
+                ):
                     os.makedirs(f"{data_folder}/videos", exist_ok=True)
                     with redirect_stdout(io.StringIO()):
                         save_video(
