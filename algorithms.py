@@ -203,9 +203,16 @@ class WeightedRecombination:
     mu: int
     lambda_: int
     mueff: float = None
+    method: str = "linear"
 
     def __post_init__(self):
-        wi_raw = np.log(self.lambda_ / 2 + 0.5) - np.log(np.arange(1, self.mu + 1))
+        if self.method == "log":
+            wi_raw = np.log(self.lambda_ / 2 + 0.5) - np.log(np.arange(1, self.mu + 1))
+        elif self.method == "linear":
+            wi_raw = np.arange(1, self.mu + 1)[::-1]
+        elif self.method == "equal":
+            wi_raw = np.ones(self.mu)
+
         self.w = wi_raw / np.sum(wi_raw)
         self.w_all = np.r_[self.w, -self.w[::-1]]
         self.mueff = 1 / np.sum(np.power(self.w, 2))
