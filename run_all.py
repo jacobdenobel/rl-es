@@ -3,7 +3,7 @@ import subprocess
 
 from main import STRATEGIES, ENVS
 
-SEEDS = range(10, 20)
+SEEDS = range(1, 31)
 
 for env in ["LunarLander-v2"]:
     for strat in STRATEGIES:
@@ -19,7 +19,7 @@ for env in ["LunarLander-v2"]:
                 str(seed),
                 "--eval_total_timesteps",
                 "--sigma0",
-                "0.25",
+                "0.01",
             ], start_new_session=True)
             time.sleep(1)
 

@@ -205,7 +205,8 @@ class WeightedRecombination:
     mueff: float = None
 
     def __post_init__(self):
-        wi_raw = np.log(self.lambda_ / 2 + 0.5) - np.log(np.arange(1, self.mu + 1))
+        #wi_raw = np.log(self.lambda_ / 2 + 0.5) - np.log(np.arange(1, self.mu + 1))
+        wi_raw = np.ones(self.mu)
         self.w = wi_raw / np.sum(wi_raw)
         self.w_all = np.r_[self.w, -self.w[::-1]]
         self.mueff = 1 / np.sum(np.power(self.w, 2))
