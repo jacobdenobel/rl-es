@@ -28,6 +28,7 @@ class Objective:
     no_bias: bool = False
     eval_total_timesteps: bool = True
     store_video: bool = True
+    aggregator: callable = np.mean
 
     def __post_init__(self):
         self.envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
@@ -84,7 +85,7 @@ class Objective:
         returns = []
         for i in range(self.n_episodes):
             returns.extend(self.calculate_returns(data_over_time[:, :, i]))
-        return -np.median(returns)
+        return -self.aggregator(returns)
 
     def eval_parallel(self, x):
         n = x.shape[1]
@@ -122,13 +123,13 @@ class Objective:
                 [self.fix_reward(rewards, dones), np.logical_or(dones, trunc)]
             )
 
-        median_returns = np.empty(n)
+        aggregated_returns = np.empty(n)
         for k, j in enumerate(range(0, n_total_episodes, self.n_episodes)):
             returns = []
             for i in range(self.n_episodes):
                 returns.extend(self.calculate_returns(data_over_time[:, :, j + i]))
-            median_returns[k] = np.median(returns)
-        return -median_returns
+            aggregated_returns[k] = self.aggregator(returns)
+        return -aggregated_returns
 
     def calculate_returns(self, Y):
         _, idx = np.unique(np.cumsum(Y[:, 1]) - Y[:, 1], return_index=True)
