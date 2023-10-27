@@ -218,7 +218,7 @@ def init_lambda(n, method="n/2"):
         return (4 + np.floor(3 * np.log(n))).astype(int) 
     
     elif method == "n/2":
-        return np.floor(n / 2)
+        return np.floor(n / 2).astype(int)
     else:
         raise ValueError()
 

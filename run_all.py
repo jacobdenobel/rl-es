@@ -5,8 +5,8 @@ from main import STRATEGIES, ENVS
 
 SEEDS = range(10, 20)
 
-for env in ["LunarLander-v2", "BipedalWalker-v3"]:
-    for strat in STRATEGIES[-1:]:
+for env in ["LunarLander-v2"]:
+    for strat in STRATEGIES:
         for seed in SEEDS:
             subprocess.Popen([
                 "python",
