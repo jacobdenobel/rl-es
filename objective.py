@@ -204,7 +204,7 @@ class Objective:
             plt.xlabel("returns")
             plt.ylabel("freq")
             plt.savefig(f"{data_folder}/returns_{name}.png")
-        return np.median(returns)
+        return np.mean(returns), np.median(returns), np.std(returns)
 
     def play(self, x, data_folder, name, plot=True):
         return self.test(x, "human", plot, data_folder, name)

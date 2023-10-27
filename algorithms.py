@@ -33,6 +33,10 @@ class Logger:
                 "current_test",
                 "population_mean",
                 "population_std",
+                "best_median",
+                "best_std",
+                "current_median",
+                "current_std",
             )
             self.writer.write(f'{",".join(self.columns)}\n')
 
@@ -62,6 +66,10 @@ class State:
         self.lamb: int = lamb
         self.mean_test = None
         self.best_test = None
+        self.best_median = None
+        self.best_std = None
+        self.mean_median = None
+        self.mean_std = None
         self.used_budget = 0
         self.time_since_best_update = 0
         self.revaluate_best_every = revaluate_best_after
@@ -97,7 +105,7 @@ class State:
         )
 
         if self.counter % self.test_gen == 0:
-            self.best_test = problem.test(
+            self.best_test, self.best_median, self.best_std = problem.test(
                 self.best.x,
                 "rgb_array_list",
                 False,
@@ -105,7 +113,7 @@ class State:
                 name=f"t-{self.counter}-best",
             )
             print("Test with best x (max):", self.best_test)
-            self.mean_test = problem.test(
+            self.mean_test, self.mean_median, self.mean_std = problem.test(
                 self.mean.x,
                 "rgb_array_list",
                 False,
@@ -128,7 +136,11 @@ class State:
                 self.best_test,
                 self.mean_test,
                 np.mean(-f),
-                np.std(-f)
+                np.std(-f),
+                self.best_median,
+                self.best_std,
+                self.mean_median,
+                self.mean_std,
             )
         )
 
