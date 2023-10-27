@@ -143,7 +143,11 @@ class Objective:
 
     def calculate_returns(self, Y):
         _, idx = np.unique(np.cumsum(Y[:, 1]) - Y[:, 1], return_index=True)
-        returns_ = [x.sum() for x in np.split(Y[:, 0], idx)[1:]]
+        episodes = np.split(Y[:, 0], idx)[1:]
+        if len(episodes) > 1:
+            episodes = episodes[:-1]
+            
+        returns_ = [x.sum() for x in episodes]
         if not self.eval_total_timesteps:
             returns_ = returns_[:1]
         
