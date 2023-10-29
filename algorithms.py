@@ -304,6 +304,7 @@ class DR1:
                     sigma *= (
                         np.power(zeta_w, beta) * np.power(zeta_sel, beta_scale)
                     ).reshape(-1, 1)
+                    sigma = sigma.clip(0, 1e3)
 
                 state.update(
                     problem,
@@ -378,10 +379,11 @@ class DR2:
                 x_prime = x_prime + y_prime
                 zeta = ((1 - c) * zeta) + (c * z_prime)
                 if uch.should_update():
-                    sigma = sigma * np.power(
+                    sigma = min(sigma * np.power(
                         np.exp((np.linalg.norm(zeta) / c2) - 1 + c3), beta
-                    )
+                    ), 1e3)
                     sigma_local *= np.power((np.abs(zeta) / c1) + (7 / 20), beta_scale)
+                    sigma_local = sigma_local.clip(0, 1e3)
 
                 state.update(
                     problem,
