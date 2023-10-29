@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from objective import Objective
 
 
+SIGMA_MAX = 1e3
+
 @dataclass
 class Solution:
     y: float = float("inf")
@@ -304,7 +306,7 @@ class DR1:
                     sigma *= (
                         np.power(zeta_w, beta) * np.power(zeta_sel, beta_scale)
                     ).reshape(-1, 1)
-                    sigma = sigma.clip(0, 1e3)
+                    sigma = sigma.clip(0, SIGMA_MAX)
 
                 state.update(
                     problem,
@@ -381,9 +383,9 @@ class DR2:
                 if uch.should_update():
                     sigma = min(sigma * np.power(
                         np.exp((np.linalg.norm(zeta) / c2) - 1 + c3), beta
-                    ), 1e3)
+                    ), SIGMA_MAX)
                     sigma_local *= np.power((np.abs(zeta) / c1) + (7 / 20), beta_scale)
-                    sigma_local = sigma_local.clip(0, 1e3)
+                    sigma_local = sigma_local.clip(0, SIGMA_MAX)
 
                 state.update(
                     problem,
