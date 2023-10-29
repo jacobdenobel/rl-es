@@ -352,7 +352,7 @@ class DR2:
 
         c1 = np.sqrt(c / (2 - c))
         c2 = np.sqrt(self.n) * c1
-        c3 = 1 + (1 / (5 * self.n))
+        c3 = 1 / (5 * self.n)
 
         weights = WeightedRecombination(self.mu, self.lambda_)
         x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
@@ -379,7 +379,7 @@ class DR2:
                 zeta = ((1 - c) * zeta) + (c * z_prime)
                 if uch.should_update():
                     sigma = sigma * np.power(
-                        np.exp((np.linalg.norm(zeta) / c2) - c3), beta
+                        np.exp((np.linalg.norm(zeta) / c2) - 1 + c3), beta
                     )
                     sigma_local *= np.power((np.abs(zeta) / c1) + (7 / 20), beta_scale)
 
