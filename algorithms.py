@@ -579,7 +579,7 @@ class ARSV1:
                 idx = np.argsort(best_rewards)[::-1]
 
                 f = np.r_[neg_reward, pos_reward]
-                sigma_rewards = f.std()
+                sigma_rewards = f.std() + 1e-12
                 weight = self.sigma0 / (self.lambda_ * sigma_rewards)
 
                 delta_rewards = pos_reward - neg_reward
