@@ -79,7 +79,7 @@ class Objective:
             actions = self.net(self.normalizer(observations))
             observations, rewards, dones, trunc, *_ = envs.step(actions)
             data_over_time[t] = np.vstack(
-                [self.fix_reward(rewards, dones), np.logical_or(dones, trunc)]
+                [rewards, np.logical_or(dones, trunc)]
             )
 
         returns = []
@@ -123,7 +123,7 @@ class Objective:
                 )
             observations, rewards, dones, trunc, *_ = self.envs.step(actions)
             data_over_time[t] = np.vstack(
-                [self.fix_reward(rewards, dones), np.logical_or(dones, trunc)]
+                [rewards, np.logical_or(dones, trunc)]
             )
 
         aggregated_returns = np.empty(n)
@@ -132,7 +132,7 @@ class Objective:
             for i in range(self.n_episodes):
                 returns.extend(self.calculate_returns(data_over_time[:, :, j + i]))
             aggregated_returns[k] = self.aggregator(returns)
-
+        
         if self.eval_total_timesteps:
             self.n_train_timesteps += self.n_timesteps * self.n_episodes * n
             self.n_train_episodes += self.n_episodes * n
@@ -154,13 +154,6 @@ class Objective:
         # TODO: we can remove incomplete episodes from the last optionally
         return returns_
 
-    def fix_reward(self, rewards, dones):
-        if self.env_name == "CartPole-v1":
-            return rewards - dones
-        elif self.env_name in ("Acrobot-v1",):
-            return rewards + (dones * self.n_timesteps)
-        return rewards
-
     def test(self, x, render_mode=None, plot=False, data_folder=None, name=None):
         self.net.set_weights(x)
 
@@ -179,7 +172,6 @@ class Objective:
                     action, *_ = self.net(self.normalizer(observation.reshape(1, -1)))
                     observation, reward, terminated, truncated, *_ = env.step(action)
                     done = terminated or truncated
-                    reward = self.fix_reward(reward, terminated)
                     ret += reward
                     if render_mode == "human":
                         print(
