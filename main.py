@@ -95,11 +95,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--initialization",
         type=str,
-        choices=("zero", "uniform", "gauss"),
-        default="zero",
+        choices=("lhs", "zero", "uniform", "gauss"),
+        default="lhs",
     )
+    
     parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="csa")
-
     parser.add_argument("--env_name", type=str, default="LunarLander-v2", choices=ENVS)
     parser.add_argument("--eval_total_timesteps", action="store_true")
 

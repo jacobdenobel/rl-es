@@ -1,8 +1,12 @@
+import warnings
 import time
 import os
 from typing import Any
-import numpy as np
 from dataclasses import dataclass, field
+
+
+import numpy as np
+from scipy.stats import qmc
 
 from objective import Objective
 
@@ -72,7 +76,6 @@ class State:
         self.best_std = None
         self.mean_median = None
         self.mean_std = None
-        self.used_budget = 0
         self.time_since_best_update = 0
         self.revaluate_best_every = revaluate_best_after
 
@@ -86,7 +89,6 @@ class State:
     ) -> None:
         self.counter += 1
         self.time_since_best_update += 1
-        self.used_budget += len(f)
 
         if self.revaluate_best_every is not None and self.revaluate_best_every < self.time_since_best_update:
             self.time_since_best_update = 0
@@ -101,9 +103,8 @@ class State:
             self.time_since_best_update = 0 
         self.mean = mean
 
-        n_evals = self.counter * self.lamb
         print(
-            f"counter: {self.counter}, dt: {dt:.3f} n_evals {n_evals}, best {-self.best.y}, mean: {-mean.y}, sigma: {sigma} ",
+            f"counter: {self.counter}, dt: {dt:.3f} n_evals {problem.n_evals}, best {-self.best.y}, mean: {-mean.y}, sigma: {sigma} ",
         )
 
         if self.counter % self.test_gen == 0:
@@ -129,7 +130,7 @@ class State:
             (
                 self.counter,
                 dt,
-                n_evals,
+                problem.n_evals,
                 problem.n_train_episodes,
                 problem.n_train_timesteps,
                 -self.best.y,
@@ -201,33 +202,44 @@ class UncertaintyHandling:
 
 
 @dataclass
-class WeightedRecombination:
+class Weights:
     mu: int
     lambda_: int
-    mueff: float = None
-    method: str = "linear"
+    n: int
+    method: str = "log"
 
     def __post_init__(self):
+        self.set_weights()
+        self.normalize_weights()
+
+    def set_weights(self):
         if self.method == "log":
-            wi_raw = np.log(self.lambda_ / 2 + 0.5) - np.log(np.arange(1, self.mu + 1))
+            self.wi_raw = np.log(self.lambda_ / 2 + 0.5) - np.log(np.arange(1, self.mu + 1))
         elif self.method == "linear":
-            wi_raw = np.arange(1, self.mu + 1)[::-1]
+            self.wi_raw = np.arange(1, self.mu + 1)[::-1]
         elif self.method == "equal":
-            wi_raw = np.ones(self.mu)
+            self.wi_raw = np.ones(self.mu)
 
-        self.w = wi_raw / np.sum(wi_raw)
+    def normalize_weights(self):
+        self.w = self.wi_raw / np.sum(self.wi_raw) 
         self.w_all = np.r_[self.w, -self.w[::-1]]
-        self.mueff = 1 / np.sum(np.power(self.w, 2))
 
+    @property
+    def mueff(self):
+        return 1 / np.sum(np.power(self.w, 2))
+
+    @property
+    def c_s(self):
+        return (self.mueff + 2) / (self.n + self.mueff + 5)
     
-def init(dim, lb, ub, method="zero"):
-    if method == "zero":
-        return np.zeros((dim, 1))
-    elif method == "uniform":
-        return np.random.uniform(lb, ub, size=(dim, 1))
-    elif method == "gauss":
-        return np.random.normal(size=(dim, 1))
-    raise ValueError()
+    @property
+    def d_s(self):
+        return 1 + self.c_s + 2 * max(0, np.sqrt((self.mueff - 1) / (self.n + 1)) - 1)
+    
+    @property
+    def sqrt_s(self):
+        return np.sqrt(self.c_s * (2 - self.c_s) * self.mueff)
+    
 
 def init_lambda(n, method="n/2"):
     """
@@ -242,6 +254,65 @@ def init_lambda(n, method="n/2"):
         return max(32, np.floor(n / 2).astype(int))
     else:
         raise ValueError()
+    
+
+
+@dataclass
+class Initializer:
+    n: int 
+    lb: float = -0.1
+    ub: float =  0.1
+    method: str = "lhs"
+    fallback: str = "zero"
+    n_evals: int = 0
+    max_evals: int = 500
+    max_observed: float = -np.inf
+    min_observed: float =  np.inf
+
+    def __post_init__(self):
+        self.sampler = qmc.LatinHypercube(self.n)
+
+    def static_init(self, method):
+        if method == "zero":
+            return np.zeros((self.n, 1))
+        elif method == "uniform":
+            return np.random.uniform(self.lb, self.ub, size=(self.n, 1))
+        elif method == "gauss":
+            return np.random.normal(size=(self.n, 1))
+        raise ValueError()
+
+    def get_x_prime(self, problem, samples_per_trial: int = 10) -> np.ndarray:
+        if self.method != "lhs":
+            return self.static_init(self.method)
+
+        samples = None
+        sample_values = np.array([])
+        f = np.array([0])
+        while self.n_evals < self.max_evals:
+            X = qmc.scale(self.sampler.random(samples_per_trial), self.lb, self.ub).T
+            f = problem(X)
+            self.n_evals += samples_per_trial
+            self.max_observed = max(self.max_observed, f.max())
+            self.min_observed = max(self.min_observed, f.max())
+            
+            if f.std() > 0:
+                idx = f != self.max_observed
+                if samples is None:
+                    samples = X[:, idx]
+                else:
+                    samples = np.c_[samples, X[:, idx]]
+                sample_values = np.r_[sample_values, f[idx]]
+        
+        if not any(sample_values):
+            warnings.warn(f"DOE did not find any variation after max_evals={self.max_evals}"
+                          f", using fallback {self.fallback} intialization.")
+            return self.static_init(self.fallback)
+
+        w = np.log(len(sample_values) + 0.5) - np.log(np.arange(1, len(sample_values) + 1))
+        w = w / w.sum()
+        idx = np.argsort(sample_values)
+        x_prime = np.sum(w * samples[:, idx], axis=1, keepdims=True)
+        return x_prime
 
 
 @dataclass
@@ -273,16 +344,17 @@ class DR1:
         sigma = np.ones((self.n, 1)) * self.sigma0
         root_pi = np.sqrt(2 / np.pi)
 
-        x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 10)
+        x_prime = init.get_x_prime(problem)
 
         state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
-        weights = WeightedRecombination(self.mu, self.lambda_)
+        weights = Weights(self.mu, self.lambda_, self.n)
 
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         
         try:
-            while self.budget > state.used_budget:
+            while self.budget > problem.n_evals:
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
@@ -299,6 +371,7 @@ class DR1:
 
                 y_prime = np.sum(Y[:, mu_best] * weights.w, axis=1, keepdims=True)
                 x_prime = x_prime + y_prime
+
                 if uch.should_update():
                     z_prime = np.sum(Z[:, mu_best] * weights.w, axis=1, keepdims=True) * np.sqrt(weights.mueff)
                     zeta_w = np.sum(zeta_i[:, mu_best] * weights.w)
@@ -357,14 +430,15 @@ class DR2:
         c2 = np.sqrt(self.n) * c1
         c3 = 1 / (5 * self.n)
 
-        weights = WeightedRecombination(self.mu, self.lambda_)
-        x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
+        weights = Weights(self.mu, self.lambda_, self.n)
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 10)
+        x_prime = init.get_x_prime(problem)
 
         state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
-            while self.budget > state.used_budget:
+            while self.budget > problem.n_evals:
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
@@ -420,20 +494,18 @@ class CSA:
         self.lambda_ = self.lambda_ or init_lambda(self.n)
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
-        self.mu = self.lambda_ // 2
+        self.mu = self.mu or self.lambda_ // 2
         print(f"n: {self.n}, lambda: {self.lambda_}, mu: {self.mu}")
 
 
     def __call__(self, problem: Objective):
-        weights = WeightedRecombination(self.mu, self.lambda_)
+        weights = Weights(self.mu, self.lambda_, self.n)
 
         echi = np.sqrt(self.n) * (1 - (1 / self.n / 4) - (1 / self.n / self.n / 21))
-        
-        c_s = (weights.mueff + 2) / (self.n + weights.mueff + 5)
-        d_s = 1 + c_s + 2 * max(0, np.sqrt((weights.mueff - 1) / (self.n + 1)) - 1)
-        sqrt_s = np.sqrt(c_s * (2 - c_s) * weights.mueff)
 
-        x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 10)
+        x_prime = init.get_x_prime(problem)
+
         sigma = self.sigma0
         s = np.ones((self.n, 1))
 
@@ -441,22 +513,23 @@ class CSA:
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
-            while self.budget > state.used_budget:
+            while self.budget > problem.n_evals:
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
                 X = x_prime + (sigma * Z)
-                f = problem(X)
+                f = problem(X) 
 
                 idx, f = uch.update(problem, f, X, self.n, self.lambda_, state)
                 mu_best = idx[: self.mu]
                 idx_min = idx[0]
+
                 z_prime = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
                 x_prime = x_prime + (sigma * z_prime)
-                s = ((1 - c_s) * s) + (sqrt_s * z_prime)
+                s = ((1 - weights.c_s) * s) + (weights.sqrt_s * z_prime)
 
                 if uch.should_update():
-                    sigma = sigma * np.exp(c_s / d_s * (np.linalg.norm(s) / echi - 1))
+                    sigma = sigma * np.exp(weights.c_s / weights.d_s * (np.linalg.norm(s) / echi - 1))
 
                 state.update(
                     problem,
@@ -492,11 +565,11 @@ class MAES:
         self.lambda_ = self.lambda_ or init_lambda(self.n)
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
-        self.mu = self.lambda_ // 2
+        self.mu = self.mu or self.lambda_ // 2
         print(f"n: {self.n}, lambda: {self.lambda_}, mu: {self.mu}")
 
     def __call__(self, problem: Objective):
-        weights = WeightedRecombination(self.mu, self.lambda_)
+        weights = Weights(self.mu, self.lambda_, self.n)
 
         echi = np.sqrt(self.n) * (1 - (1 / self.n / 4) - (1 / self.n / self.n / 21))
         c_s = (weights.mueff + 2) / (self.n + weights.mueff + 5)
@@ -505,7 +578,8 @@ class MAES:
         d_s = 1 + c_s + 2 * max(0, np.sqrt((weights.mueff - 1) / (self.n + 1)) - 1)
         sqrt_s = np.sqrt(c_s * (2 - c_s) * weights.mueff)
 
-        x_prime = init(self.n, problem.lb, problem.ub, self.initialization)
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 10)
+        x_prime = init.get_x_prime(problem)
         sigma = self.sigma0
         M = np.eye(self.n)
         s = np.ones((self.n, 1))
@@ -514,7 +588,7 @@ class MAES:
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
-            while self.budget > state.used_budget:
+            while self.budget > problem.n_evals:
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
@@ -570,7 +644,7 @@ class ARSV1:
 
         state = State(self.data_folder, self.test_gen, self.lambda_ * 2)
         try:
-            while self.budget > state.used_budget:
+            while self.budget > problem.n_evals:
                 delta = np.random.normal(size=(self.n, self.lambda_))
 
                 neg = m - (self.eta * delta)

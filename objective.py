@@ -29,6 +29,9 @@ class Objective:
     eval_total_timesteps: bool = True
     store_video: bool = True
     aggregator: callable = np.mean
+    n_train_timesteps: int = 0
+    n_train_episodes: int = 0
+    n_evals: int = 0
 
     def __post_init__(self):
         self.envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
@@ -61,10 +64,10 @@ class Objective:
         self.lb = -1 * np.ones(self.n)
         self.ub = 1 * np.ones(self.n)
         self.nets = []
-        self.n_train_timesteps = 0
-        self.n_train_episodes = 0
+      
 
     def __call__(self, x):
+        self.n_evals += x.shape[1]
         if self.parallel:
             return self.eval_parallel(x)
         return np.array([self.eval_sequential(xi) for xi in x.T])
