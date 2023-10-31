@@ -16,6 +16,7 @@ ENVS = (
     "MountainCar-v0",
     "LunarLander-v2",
     "BipedalWalker-v3",
+    "CarRacing-v2"
 )
 
 BUDGETS = (
@@ -23,7 +24,8 @@ BUDGETS = (
     1_000,     # Acrobot
     5_000,     # MountainCar
     5_000,     # LunarLander
-    20_000     # Walker
+    20_000,    # Walker
+    10_000     # Racer
 )
 
 
@@ -79,6 +81,11 @@ if __name__ == "__main__":
         default=1.0,
     )
     parser.add_argument(
+        "--eta",
+        type=float,
+        default=0.03,
+    )
+    parser.add_argument(
         "--n_hidden",
         help="Number of hidden units in layer of the neural network (only used if n_layers > 2)",
         type=int,
@@ -98,7 +105,7 @@ if __name__ == "__main__":
         choices=("lhs", "zero", "uniform", "gauss"),
         default="lhs",
     )
-    
+
     parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="csa")
     parser.add_argument("--env_name", type=str, default="LunarLander-v2", choices=ENVS)
     parser.add_argument("--eval_total_timesteps", action="store_true")
@@ -214,8 +221,11 @@ if __name__ == "__main__":
             optimizer = ARSV1(
                 obj.n,
                 args.budget,
+                sigma0=args.sigma0,
                 data_folder=data_folder,
                 test_gen=args.test_every_nth_iteration,
+                mu=args.mu, 
+                lambda_=args.lamb,
             )
         else:
             raise ValueError()

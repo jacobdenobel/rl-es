@@ -635,9 +635,13 @@ class ARSV1:
     data_folder: str = None
     test_gen: int = 25
     sigma0: float = 0.02     # learning rate alpha
-    lambda_: int = 16       # n offspring for each direction
-    mu: int = 16            # best offspring
-    eta: float = 0.03       # noise parameter
+    lambda_: int = 16        # n offspring for each direction
+    mu: int = 16             # best offspring
+    eta: float = 0.03        # noise parameter
+
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or 16
+        self.mu = self.mu or 16
 
     def __call__(self, problem: Objective):
         m = np.zeros((self.n, 1))

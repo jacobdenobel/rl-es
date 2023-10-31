@@ -9,6 +9,12 @@ import matplotlib.pyplot as plt
 from gymnasium.utils.save_video import save_video
 
 from network import Network, identity, MinMaxNormalizer, argmax
+from skimage.measure import block_reduce
+
+def rgb_to_gray_flat(observations):
+    gray = np.dot(observations[..., :3], [0.2989, 0.5870, 0.1140])
+    reduced = block_reduce(gray, (1, 6, 6), np.max)
+    return reduced.reshape(len(reduced), -1)
 
 
 @dataclass
@@ -35,7 +41,16 @@ class Objective:
 
     def __post_init__(self):
         self.envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
-        if self.env_name == "BipedalWalker-v3":
+        self.obs_mapper = identity
+        self.state_size = self.envs.observation_space.shape[1]
+
+        if self.env_name == "CarRacing-v2":
+            self.action_size = 3
+            self.n_actions = 3
+            self.last_activation = identity
+            self.obs_mapper = rgb_to_gray_flat
+            self.state_size = 256
+        elif self.env_name == "BipedalWalker-v3":
             self.action_size = 4
             self.n_actions = 4
             self.last_activation = identity
@@ -43,7 +58,6 @@ class Objective:
             self.action_size = self.envs.action_space[0].n
             self.last_activation = argmax
             self.n_actions = 1
-        self.state_size = self.envs.observation_space.shape[1]
 
         if self.normalized:
             self.normalizer = MinMaxNormalizer(
@@ -113,6 +127,8 @@ class Objective:
             net.set_weights(w)
 
         observations, *_ = self.envs.reset()
+        observations = self.obs_mapper(observations)
+
         n_total_episodes = action_shape = self.n_episodes * n
         if self.n_actions > 1:
             action_shape = (action_shape, self.n_actions)
@@ -125,6 +141,7 @@ class Objective:
                     self.normalizer(observations[idx : idx + self.n_episodes, :])
                 )
             observations, rewards, dones, trunc, *_ = self.envs.step(actions)
+            observations = self.obs_mapper(observations)
             data_over_time[t] = np.vstack(
                 [rewards, np.logical_or(dones, trunc)]
             )
@@ -174,6 +191,7 @@ class Objective:
                 while not done:
                     action, *_ = self.net(self.normalizer(observation.reshape(1, -1)))
                     observation, reward, terminated, truncated, *_ = env.step(action)
+                    observation = self.obs_mapper(observation)
                     done = terminated or truncated
                     ret += reward
                     if render_mode == "human":
