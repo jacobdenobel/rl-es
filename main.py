@@ -226,6 +226,7 @@ if __name__ == "__main__":
                 test_gen=args.test_every_nth_iteration,
                 mu=args.mu, 
                 lambda_=args.lamb,
+                eta=args.eta
             )
         else:
             raise ValueError()
