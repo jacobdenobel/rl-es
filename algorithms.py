@@ -685,3 +685,54 @@ class ARSV1:
         finally:
             state.logger.close()
         return state.best, state.mean
+
+
+@dataclass
+class EGS:
+    n: int
+    budget: int = 25_000
+    data_folder: str = None
+    test_gen: int = 25
+    sigma0: float = 0.02     
+    lambda_: int = 16        
+    mu: int = None             
+    kappa: float = 2.0    
+
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or 16
+        self.mu = 1
+
+    def __call__(self, problem: Objective):
+        m = np.zeros((self.n, 1))
+
+        state = State(self.data_folder, self.test_gen, self.lambda_)
+        sigma = self.sigma0
+        try:
+            while self.budget > problem.n_evals:
+                Z = np.random.normal(size=(self.n, self.lambda_))
+                y_pos = m + sigma * Z
+                y_neg = m - sigma * Z
+                f_pos = problem(y_pos)
+                f_neg = problem(y_neg)
+
+                z_avg  = np.sum((f_neg - f_pos) * Z, axis=1, keepdims=True)
+                z_prog = (np.sqrt(self.n) / self.kappa) * (z_avg / np.linalg.norm(z_avg))
+
+                m = m + sigma * z_prog
+                
+                f = np.r_[f_pos, f_neg]
+                X = np.hstack([y_pos, y_neg])
+                best_idx = np.argmin(f)
+
+                state.update(
+                    problem,
+                    Solution(f[best_idx],  X[:, best_idx].copy()),
+                    Solution(np.mean(f), m.copy()),
+                    sigma,
+                    f
+                )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            state.logger.close()
+        return state.best, state.mean

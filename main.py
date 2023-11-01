@@ -5,7 +5,7 @@ import json
 
 import numpy as np
 import gymnasium as gym
-from algorithms import MAES, DR1, ARSV1, CSA, DR2
+from algorithms import MAES, DR1, ARSV1, CSA, DR2, EGS
 from objective import Objective
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
@@ -30,7 +30,7 @@ BUDGETS = (
 
 
 
-STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars-v1",)
+STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars-v1", "egs")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -106,7 +106,7 @@ if __name__ == "__main__":
         default="lhs",
     )
 
-    parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="csa")
+    parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="egs")
     parser.add_argument("--env_name", type=str, default="LunarLander-v2", choices=ENVS)
     parser.add_argument("--eval_total_timesteps", action="store_true")
 
@@ -228,6 +228,18 @@ if __name__ == "__main__":
                 lambda_=args.lamb,
                 eta=args.eta
             )
+        elif args.strategy == "egs":
+            optimizer = EGS(
+                obj.n,
+                args.budget,
+                data_folder=data_folder,
+                test_gen=args.test_every_nth_iteration,
+                sigma0=args.sigma0,
+                lambda_=args.lamb,
+                mu=args.mu, 
+                # kappa=None
+            )
+
         else:
             raise ValueError()
 
