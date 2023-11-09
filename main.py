@@ -221,12 +221,12 @@ if __name__ == "__main__":
             optimizer = ARSV1(
                 obj.n,
                 args.budget,
-                sigma0=args.sigma0,
+                #sigma0=args.sigma0,
                 data_folder=data_folder,
                 test_gen=args.test_every_nth_iteration,
                 mu=args.mu, 
                 lambda_=args.lamb,
-                eta=args.eta
+                eta=args.sigma0
             )
         elif args.strategy == "egs":
             optimizer = EGS(
