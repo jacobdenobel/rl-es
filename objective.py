@@ -38,6 +38,7 @@ class Objective:
     n_train_timesteps: int = 0
     n_train_episodes: int = 0
     n_evals: int = 0
+    data_folder: str =  None
 
     def __post_init__(self):
         self.envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
@@ -78,13 +79,28 @@ class Objective:
         self.lb = -1 * np.ones(self.n)
         self.ub = 1 * np.ones(self.n)
         self.nets = []
-      
+        self.train_writer = open(os.path.join(self.data_folder, "train_evals.csv"), "a+")
+        self.test_writer = open(os.path.join(self.data_folder, "test_evals.csv"), "a+")
+
+        header = ', '.join([f"w{i}"for i in range(self.n)])
+        header = f"evals, fitness, {header}\n"
+        self.train_writer.write(header)
+        self.test_writer.write(header)
+        self.n_test_evals = 0
+        
 
     def __call__(self, x):
-        self.n_evals += x.shape[1]
         if self.parallel:
-            return self.eval_parallel(x)
-        return np.array([self.eval_sequential(xi) for xi in x.T])
+            f = self.eval_parallel(x)
+        else:
+            f = np.array([self.eval_sequential(xi) for xi in x.T])
+            
+        for y, xi in zip(f, x.T):
+            self.n_evals += 1
+            self.train_writer.write(
+                f"{self.n_evals}, {y}, {', '.join(map(str, xi))}\n" 
+            )
+        return f
 
     def eval_sequential(self, x):
         envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
@@ -174,7 +190,7 @@ class Objective:
         # TODO: we can remove incomplete episodes from the last optionally
         return returns_
 
-    def test(self, x, render_mode=None, plot=False, data_folder=None, name=None):
+    def test(self, x, render_mode=None, plot=False, name=None):
         self.net.set_weights(x)
 
         returns = []
@@ -206,20 +222,25 @@ class Objective:
                     and episode_index == 0
                 ):
                     if self.store_video:
-                        os.makedirs(f"{data_folder}/videos", exist_ok=True)
+                        os.makedirs(f"{self.data_folder}/videos", exist_ok=True)
                         with redirect_stdout(io.StringIO()):
                             save_video(
                                 env.render(),
-                                f"{data_folder}/videos",
+                                f"{self.data_folder}/videos",
                                 fps=env.metadata["render_fps"],
                                 step_starting_index=0,
                                 episode_index=0,
                                 name_prefix=name,
                             )
-                    os.makedirs(f"{data_folder}/policies", exist_ok=True)
-                    np.save(f"{data_folder}/policies/{name}.pkl", x)
+                    os.makedirs(f"{self.data_folder}/policies", exist_ok=True)
+                    np.save(f"{self.data_folder}/policies/{name}.pkl", x)
                     render_mode = None
                 returns.append(ret)
+                self.n_test_evals += 1
+                self.test_writer.write(
+                    f"{self.n_test_evals}, {ret}, {', '.join(map(str, x))}\n" 
+                )
+
         except KeyboardInterrupt:
             pass
         finally:
@@ -230,8 +251,8 @@ class Objective:
             plt.grid()
             plt.xlabel("returns")
             plt.ylabel("freq")
-            plt.savefig(f"{data_folder}/returns_{name}.png")
+            plt.savefig(f"{self.data_folder}/returns_{name}.png")
         return np.mean(returns), np.median(returns), np.std(returns)
 
-    def play(self, x, data_folder, name, plot=True):
-        return self.test(x, "human", plot, data_folder, name)
+    def play(self, x, name, plot=True):
+        return self.test(x, "human", plot, name)

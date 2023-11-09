@@ -112,7 +112,6 @@ class State:
                 self.best.x,
                 "rgb_array_list",
                 False,
-                self.data_folder,
                 name=f"t-{self.counter}-best",
             )
             print("Test with best x (max):", self.best_test)
@@ -120,7 +119,6 @@ class State:
                 self.mean.x,
                 "rgb_array_list",
                 False,
-                self.data_folder,
                 name=f"t-{self.counter}-mean",
             )
             print("Test with mean x (max):", self.mean_test)
@@ -344,7 +342,7 @@ class DR1:
         sigma = np.ones((self.n, 1)) * self.sigma0
         root_pi = np.sqrt(2 / np.pi)
 
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 10)
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         x_prime = init.get_x_prime(problem)
 
         state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
@@ -431,7 +429,7 @@ class DR2:
         c3 = 1 / (5 * self.n)
 
         weights = Weights(self.mu, self.lambda_, self.n)
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 10)
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         x_prime = init.get_x_prime(problem)
 
         state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
@@ -503,7 +501,7 @@ class CSA:
 
         echi = np.sqrt(self.n) * (1 - (1 / self.n / 4) - (1 / self.n / self.n / 21))
 
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 10)
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         x_prime = init.get_x_prime(problem)
 
         sigma = self.sigma0
@@ -578,7 +576,7 @@ class MAES:
         d_s = 1 + c_s + 2 * max(0, np.sqrt((weights.mueff - 1) / (self.n + 1)) - 1)
         sqrt_s = np.sqrt(c_s * (2 - c_s) * weights.mueff)
 
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 10)
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         x_prime = init.get_x_prime(problem)
         sigma = self.sigma0
         M = np.eye(self.n)
@@ -634,25 +632,28 @@ class ARSV1:
     budget: int = 25_000
     data_folder: str = None
     test_gen: int = 25
-    sigma0: float = 0.02     # learning rate alpha
-    lambda_: int = 16        # n offspring for each direction
-    mu: int = 16             # best offspring
-    eta: float = 0.03        # noise parameter
+    alpha: float = 0.02       # learning rate alpha
+    lambda_: int = 16         # n offspring for each direction
+    mu: int = 16              # best offspring
+    sigma0: float = 0.03      # noise parameter
+    initialization: str = "zero"
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or 16
         self.mu = self.mu or 16
 
     def __call__(self, problem: Objective):
-        m = np.zeros((self.n, 1))
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        m = init.get_x_prime(problem)
+
 
         state = State(self.data_folder, self.test_gen, self.lambda_ * 2)
         try:
             while self.budget > problem.n_evals:
                 delta = np.random.normal(size=(self.n, self.lambda_))
 
-                neg = m - (self.eta * delta)
-                pos = m + (self.eta * delta)
+                neg = m - (self.sigma0 * delta)
+                pos = m + (self.sigma0 * delta)
 
                 neg_reward = -problem(neg)
                 pos_reward = -problem(pos)
@@ -662,7 +663,7 @@ class ARSV1:
 
                 f = np.r_[neg_reward, pos_reward]
                 sigma_rewards = f.std() + 1e-12
-                weight = self.sigma0 / (self.lambda_ * sigma_rewards)
+                weight = self.alpha / (self.lambda_ * sigma_rewards)
 
                 delta_rewards = pos_reward - neg_reward
                 m += (weight * (delta_rewards[idx] * delta[:, idx]).sum(axis=1, keepdims=True))
@@ -697,13 +698,15 @@ class EGS:
     lambda_: int = 16        
     mu: int = None             
     kappa: float = 2.0    
+    initialization: str = "zero"
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or 16
         self.mu = 1
 
     def __call__(self, problem: Objective):
-        m = np.zeros((self.n, 1))
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        m = init.get_x_prime(problem)
 
         state = State(self.data_folder, self.test_gen, self.lambda_)
         sigma = self.sigma0

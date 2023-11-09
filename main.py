@@ -140,18 +140,6 @@ if __name__ == "__main__":
     print(spec)
 
     np.random.seed(args.seed)
-    obj = Objective(
-        args.n_episodes,
-        args.n_timesteps,
-        args.n_hidden,
-        args.n_layers,
-        env_name=args.env_name,
-        normalized=args.normalized,
-        no_bias=not args.with_bias,
-        eval_total_timesteps=args.eval_total_timesteps,
-        n_test_episodes=args.n_test_episodes,
-        store_video=args.store_videos
-    )
     plot = True
     uh = ''
     if args.uncertainty_handled:
@@ -162,8 +150,21 @@ if __name__ == "__main__":
         mirrored = "-mirrored"
 
     data_folder = f"{DATA}/{args.env_name}/{uh}{args.strategy}{mirrored}/{t}"
+    os.makedirs(data_folder, exist_ok=True)
+    obj = Objective(
+        args.n_episodes,
+        args.n_timesteps,
+        args.n_hidden,
+        args.n_layers,
+        env_name=args.env_name,
+        normalized=args.normalized,
+        no_bias=not args.with_bias,
+        eval_total_timesteps=args.eval_total_timesteps,
+        n_test_episodes=args.n_test_episodes,
+        store_video=args.store_videos,
+        data_folder=data_folder
+    )
     if args.play is None:
-        os.makedirs(data_folder)
         if args.strategy == "maes":
             optimizer = MAES(
                 obj.n,
@@ -221,13 +222,13 @@ if __name__ == "__main__":
             optimizer = ARSV1(
                 obj.n,
                 args.budget,
-                #sigma0=args.sigma0,
+                sigma0=args.sigma0,
                 data_folder=data_folder,
                 test_gen=args.test_every_nth_iteration,
                 mu=args.mu, 
                 lambda_=args.lamb,
-                eta=args.sigma0
-            )
+                initialization=args.initialization,
+        )
         elif args.strategy == "egs":
             optimizer = EGS(
                 obj.n,
@@ -237,6 +238,7 @@ if __name__ == "__main__":
                 sigma0=args.sigma0,
                 lambda_=args.lamb,
                 mu=args.mu, 
+                initialization=args.initialization,
                 # kappa=None
             )
 

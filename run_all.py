@@ -5,8 +5,8 @@ from main import STRATEGIES, ENVS
 
 SEEDS = range(1, 31)
 
-for env in ["BipedalWalker-v3"]:
-    for strat in ["egs", "ars-v1"]:
+for env in ENVS:
+    for strat in STRATEGIES:
         for seed in SEEDS:
             subprocess.Popen([
                 "python",
@@ -19,7 +19,9 @@ for env in ["BipedalWalker-v3"]:
                 str(seed),
                 "--eval_total_timesteps",
                 "--sigma0",
-                "0.5",
+                "0.05",
+                "--initialization",
+                "zero"
             ], start_new_session=True)
             time.sleep(1)
 
