@@ -641,8 +641,8 @@ class ARSV1:
     initialization: str = "zero"
 
     def __post_init__(self):
-        self.lambda_ = self.lambda_ or 16
-        self.mu = self.mu or 16
+        self.lambda_ = self.lambda_ or int(init_lambda(self.n) / 2)
+        self.mu = self.mu or self.lambda_
 
     def __call__(self, problem: Objective):
         init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
@@ -703,7 +703,7 @@ class EGS:
     initialization: str = "zero"
 
     def __post_init__(self):
-        self.lambda_ = self.lambda_ or 16
+        self.lambda_ = self.lambda_ or int(init_lambda(self.n) / 2)
         self.mu = 1
 
     def __call__(self, problem: Objective):
@@ -755,7 +755,7 @@ class CMA_EGS:
     initialization: str = "zero"
 
     def __post_init__(self):
-        self.lambda_ = self.lambda_ or 16
+        self.lambda_ = self.lambda_ or int(init_lambda(self.n) / 2)
         self.mu = 1
 
     def __call__(self, problem: Objective):

@@ -16,6 +16,35 @@ def rgb_to_gray_flat(observations):
     reduced = block_reduce(gray, (1, 6, 6), np.max)
     return reduced.reshape(len(reduced), -1)
 
+class NoNormalizer:
+    def observe(self, x):
+        pass
+
+    def __call__(self, x):
+        return x
+
+class Normalizer:
+    def __init__(self, nb_inputs):
+        self.n = 0 
+        self.mean = np.zeros(nb_inputs)
+        self.mean_diff = np.zeros(nb_inputs)
+        self.var = np.zeros(nb_inputs)
+
+    def observe(self, X):
+        for x in X: 
+            self.n += 1
+            last_mean = self.mean.copy()
+            self.mean += (x - self.mean) / self.n
+            self.mean_diff += (x - last_mean) * (x - self.mean)
+            if self.n > 1:
+                self.var = (self.mean_diff / (self.n - 1)).clip(1e-8)
+
+    def __call__(self, inputs):
+        if self.n < 100:
+            return inputs
+        obs_mean = self.mean
+        obs_std = np.sqrt(self.var)
+        return (inputs - obs_mean) / obs_std
 
 @dataclass
 class Objective:
@@ -91,11 +120,9 @@ class Objective:
             self.n_actions = 1
 
         if self.normalized:
-            self.normalizer = MinMaxNormalizer(
-                self.envs.observation_space.low[0], self.envs.observation_space.high[0]
-            )
+            self.normalizer = Normalizer(self.state_size)
         else:
-            self.normalizer = identity
+            self.normalizer = NoNormalizer()
 
         self.net = Network(
             self.state_size,
@@ -140,6 +167,7 @@ class Objective:
         data_over_time = np.empty((self.n_timesteps, 2, self.n_episodes))
         for t in range(self.n_timesteps):
             actions = self.net(self.normalizer(observations))
+            self.normalizer.observe(observations)
             observations, rewards, dones, trunc, *_ = envs.step(actions)
             rewards = self.reward_shaping(rewards)
             data_over_time[t] = np.vstack(
@@ -184,9 +212,10 @@ class Objective:
         for t in range(self.n_timesteps):
             for i, net in enumerate(self.nets):
                 idx = i * self.n_episodes
-                actions[idx : idx + self.n_episodes] = net(
-                    self.normalizer(observations[idx : idx + self.n_episodes, :])
-                )
+                obs = observations[idx : idx + self.n_episodes, :]
+                actions[idx : idx + self.n_episodes] = net(self.normalizer(obs))
+                self.normalizer.observe(obs)
+
             observations, rewards, dones, trunc, *_ = self.envs.step(actions)
             observations = self.obs_mapper(observations)
             rewards = self.reward_shaping(rewards)

@@ -1,11 +1,12 @@
+import os
 import time
 import subprocess
 
 from main import STRATEGIES, ENVS
 
-SEEDS = range(1, 31)
+SEEDS = range(1, 6)
 
-for env in ENVS:
+for env in ['HalfCheetah-v4']:
     for strat in STRATEGIES:
         for seed in SEEDS:
             subprocess.Popen([
@@ -17,12 +18,12 @@ for env in ENVS:
                 strat,
                 "--seed",
                 str(seed),
-                "--eval_total_timesteps",
                 "--sigma0",
-                "0.05",
+                "0.5",
                 "--initialization",
-                "zero"
-            ], start_new_session=True)
+                "zero",
+                "--normalized"
+            ], start_new_session=True, env=dict(os.environ, MUJOCO_GL="egl"))
             time.sleep(1)
 
 
