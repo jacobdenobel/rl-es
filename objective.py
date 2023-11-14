@@ -44,6 +44,7 @@ class Objective:
         self.envs = gym.make_vec(self.env_name, num_envs=self.n_episodes)
         self.obs_mapper = identity
         self.state_size = self.envs.observation_space.shape[1]
+        self.reward_shaping = identity
 
         if self.env_name == "CarRacing-v2":
             self.action_size = 3
@@ -55,10 +56,35 @@ class Objective:
             self.action_size = 4
             self.n_actions = 4
             self.last_activation = identity
+            self.reward_shaping = lambda x: np.clip(x, -1, 1)
+        elif self.env_name == "Swimmer-v4":
+            self.action_size = 2
+            self.n_actions = 2
+            self.last_activation = identity
         elif self.env_name == "Hopper-v4":
             self.action_size = 3
             self.n_actions = 3
             self.last_activation = identity
+            self.reward_shaping = lambda x: x - 1
+        elif self.env_name == "HalfCheetah-v4":
+            self.action_size = 6
+            self.n_actions = 6
+            self.last_activation = identity
+        elif self.env_name == "Walker2d-v4":
+            self.action_size = 6
+            self.n_actions = 6
+            self.last_activation = identity
+            self.reward_shaping = lambda x: x - 1        
+        elif self.env_name == "Ant-v4":
+            self.action_size = 8
+            self.n_actions = 8
+            self.last_activation = identity
+            self.reward_shaping = lambda x: x - 1
+        elif self.env_name == "Humanoid-v4":
+            self.action_size = 17
+            self.n_actions = 17
+            self.last_activation = identity
+            self.reward_shaping = lambda x: x - 5
         else:
             self.action_size = self.envs.action_space[0].n
             self.last_activation = argmax
@@ -115,6 +141,7 @@ class Objective:
         for t in range(self.n_timesteps):
             actions = self.net(self.normalizer(observations))
             observations, rewards, dones, trunc, *_ = envs.step(actions)
+            rewards = self.reward_shaping(rewards)
             data_over_time[t] = np.vstack(
                 [rewards, np.logical_or(dones, trunc)]
             )
@@ -162,6 +189,7 @@ class Objective:
                 )
             observations, rewards, dones, trunc, *_ = self.envs.step(actions)
             observations = self.obs_mapper(observations)
+            rewards = self.reward_shaping(rewards)
             data_over_time[t] = np.vstack(
                 [rewards, np.logical_or(dones, trunc)]
             )

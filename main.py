@@ -5,7 +5,7 @@ import json
 
 import numpy as np
 import gymnasium as gym
-from algorithms import MAES, DR1, ARSV1, CSA, DR2, EGS
+from algorithms import MAES, DR1, ARSV1, CSA, DR2, EGS, CMA_EGS
 from objective import Objective
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
@@ -17,7 +17,12 @@ ENVS = (
     "LunarLander-v2",
     "BipedalWalker-v3",
     "CarRacing-v2",
-    "Hopper-v4"
+    "Swimmer-v4",
+    "Hopper-v4",
+    "HalfCheetah-v4",
+    "Walker2d-v4",
+    "Ant-v4",
+    "Humanoid-v4"
 )
 
 BUDGETS = (
@@ -27,12 +32,17 @@ BUDGETS = (
     5_000,     # LunarLander
     20_000,    # Walker
     10_000,    # Racer,
-    50_000     # Hopper
+    10_000,    # Swimmer
+    20_000,    # Hopper
+    20_000,    # HalfCheetah
+    100_000,   # Walker2d
+    100_000,   # Ant
+    500_000,   # Humanoid
 )
 
 
 
-STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars-v1", "egs")
+STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars-v1", "egs", "cma-egs")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -243,6 +253,17 @@ if __name__ == "__main__":
                 mu=args.mu, 
                 initialization=args.initialization,
                 # kappa=None
+            )
+        elif args.strategy == "cma-egs":
+            optimizer = CMA_EGS(
+                obj.n,
+                args.budget,
+                data_folder=data_folder,
+                test_gen=args.test_every_nth_iteration,
+                sigma0=args.sigma0,
+                lambda_=args.lamb,
+                mu=args.mu, 
+                initialization=args.initialization,
             )
 
         else:

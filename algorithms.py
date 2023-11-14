@@ -104,7 +104,9 @@ class State:
         self.mean = mean
 
         print(
-            f"counter: {self.counter}, dt: {dt:.3f} n_evals {problem.n_evals}, best {-self.best.y}, mean: {-mean.y}, sigma: {sigma} ",
+            f"counter: {self.counter}, dt: {dt:.3f} n_evals {problem.n_evals}, "
+            f"best (train): {-self.best.y}, mean (train): {-mean.y}, sigma: {sigma} "
+            f"best (test): {self.best_test}, mean (test): {self.mean_test}"
         )
 
         if self.counter % self.test_gen == 0:
@@ -739,3 +741,87 @@ class EGS:
         finally:
             state.logger.close()
         return state.best, state.mean
+
+@dataclass
+class CMA_EGS:
+    n: int
+    budget: int = 25_000
+    data_folder: str = None
+    test_gen: int = 25
+    sigma0: float = 0.02     
+    lambda_: int = 16        
+    mu: int = None             
+    kappa: float = 2.0    
+    initialization: str = "zero"
+
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or 16
+        self.mu = 1
+
+    def __call__(self, problem: Objective):
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        m = init.get_x_prime(problem)
+
+        pc = np.zeros((self.n, 1))
+        ps = np.zeros((self.n, 1))
+        B = np.eye(self.n)
+        C = np.eye(self.n)
+        D = np.ones((self.n, 1))
+
+        alpha = beta = 4 / (self.n + 4)
+        gamma = 2 / pow(self.n + np.sqrt(2), 2)
+        chi = 2 * self.n * (1 + (1 / beta))
+
+        state = State(self.data_folder, self.test_gen, self.lambda_)
+        sigma = self.sigma0
+        try:
+            while self.budget > problem.n_evals:
+                Z = np.random.normal(size=(self.n, self.lambda_))
+                Y = np.dot(B, D * Z)
+                y_pos = m + (sigma * Y)
+                y_neg = m - (sigma * Y)
+                f_pos = problem(y_pos)
+                f_neg = problem(y_neg)
+
+                z_avg  = np.sum((f_neg - f_pos) * Z, axis=1, keepdims=True)
+                z_prog = (np.sqrt(self.n) / self.kappa) * (z_avg / np.linalg.norm(z_avg))
+
+                bd_z_prog = np.dot(B, D * z_prog)
+                b_z_prog = np.dot(B, z_prog)
+                m = m + sigma * bd_z_prog
+
+                pc = ((1 - alpha) * pc) + (self.kappa * np.sqrt(alpha * (2 - alpha)) * bd_z_prog)
+                ps = ((1 - beta) * ps) + (self.kappa * np.sqrt(beta * (2 - beta)) * b_z_prog)
+                C = ((1 - gamma) * C) + (gamma * (pc * pc.T))
+
+                sigma *= np.exp((pow(np.linalg.norm(ps), 2) - self.n) / chi)
+                
+                if np.isinf(C).any() or np.isnan(C).any() or (not 1e-16 < sigma < 1e6):
+                    sigma = self.sigma0
+                    pc = np.zeros((self.n, 1))
+                    ps = np.zeros((self.n, 1))
+                    C = np.eye(self.n)
+                    B = np.eye(self.n)
+                    D = np.ones((self.n, 1))
+                elif self.n < 100 or state.counter % (self.n // 10) == 0:
+                    C = np.triu(C) + np.triu(C, 1).T
+                    D, B = np.linalg.eigh(C)
+                    D = np.sqrt(D).reshape(-1, 1)
+
+                f = np.r_[f_pos, f_neg]
+                X = np.hstack([y_pos, y_neg])
+                best_idx = np.argmin(f)
+
+                state.update(
+                    problem,
+                    Solution(f[best_idx],  X[:, best_idx].copy()),
+                    Solution(np.mean(f), m.copy()),
+                    sigma,
+                    f
+                )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            state.logger.close()
+        return state.best, state.mean
+
