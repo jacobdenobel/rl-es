@@ -55,6 +55,10 @@ class Objective:
             self.action_size = 4
             self.n_actions = 4
             self.last_activation = identity
+        elif self.env_name == "Hopper-v4":
+            self.action_size = 3
+            self.n_actions = 3
+            self.last_activation = identity
         else:
             self.action_size = self.envs.action_space[0].n
             self.last_activation = argmax
@@ -94,7 +98,7 @@ class Objective:
             f = self.eval_parallel(x)
         else:
             f = np.array([self.eval_sequential(xi) for xi in x.T])
-            
+
         for y, xi in zip(f, x.T):
             self.n_evals += 1
             self.train_writer.write(
@@ -238,7 +242,7 @@ class Objective:
                 returns.append(ret)
                 self.n_test_evals += 1
                 self.test_writer.write(
-                    f"{self.n_test_evals}, {ret}, {', '.join(map(str, x))}\n" 
+                    f"{self.n_test_evals}, {ret}, {', '.join(map(str, x.ravel()))}\n" 
                 )
 
         except KeyboardInterrupt:

@@ -16,7 +16,8 @@ ENVS = (
     "MountainCar-v0",
     "LunarLander-v2",
     "BipedalWalker-v3",
-    "CarRacing-v2"
+    "CarRacing-v2",
+    "Hopper-v4"
 )
 
 BUDGETS = (
@@ -25,7 +26,8 @@ BUDGETS = (
     5_000,     # MountainCar
     5_000,     # LunarLander
     20_000,    # Walker
-    10_000     # Racer
+    10_000,    # Racer,
+    50_000     # Hopper
 )
 
 
@@ -103,12 +105,12 @@ if __name__ == "__main__":
         "--initialization",
         type=str,
         choices=("lhs", "zero", "uniform", "gauss"),
-        default="lhs",
+        default="zero",
     )
 
-    parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="egs")
+    parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="csa")
     parser.add_argument("--env_name", type=str, default="LunarLander-v2", choices=ENVS)
-    parser.add_argument("--eval_total_timesteps", action="store_true")
+    parser.add_argument("--dont_eval_total_timesteps", action="store_true")
 
     parser.add_argument(
         "--play",
@@ -151,6 +153,7 @@ if __name__ == "__main__":
 
     data_folder = f"{DATA}/{args.env_name}/{uh}{args.strategy}{mirrored}/{t}"
     os.makedirs(data_folder, exist_ok=True)
+
     obj = Objective(
         args.n_episodes,
         args.n_timesteps,
@@ -159,7 +162,7 @@ if __name__ == "__main__":
         env_name=args.env_name,
         normalized=args.normalized,
         no_bias=not args.with_bias,
-        eval_total_timesteps=args.eval_total_timesteps,
+        eval_total_timesteps=not args.dont_eval_total_timesteps,
         n_test_episodes=args.n_test_episodes,
         store_video=args.store_videos,
         data_folder=data_folder
