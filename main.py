@@ -2,47 +2,15 @@ import os
 import time
 import argparse
 import json
+from dataclasses import dataclass
 
 import numpy as np
 import gymnasium as gym
-from algorithms import MAES, DR1, ARSV1, CSA, DR2, EGS, CMA_EGS
-from objective import Objective
+from algorithms import MAES, DR1, ARS, CSA, DR2, EGS, CMA_EGS, ARS_OPTIMAL_PARAMETERS
+from objective import Objective, ENVIRONMENTS
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
-
-ENVS = (
-    "CartPole-v1",
-    "Acrobot-v1",
-    "MountainCar-v0",
-    "LunarLander-v2",
-    "BipedalWalker-v3",
-    "CarRacing-v2",
-    "Swimmer-v4",
-    "Hopper-v4",
-    "HalfCheetah-v4",
-    "Walker2d-v4",
-    "Ant-v4",
-    "Humanoid-v4"
-)
-
-BUDGETS = (
-    500,       # Cartpole
-    1_000,     # Acrobot
-    5_000,     # MountainCar
-    5_000,     # LunarLander
-    20_000,    # Walker
-    10_000,    # Racer,
-    10_000,    # Swimmer
-    20_000,    # Hopper
-    20_000,    # HalfCheetah
-    100_000,   # Walker2d
-    100_000,   # Ant
-    500_000,   # Humanoid
-)
-
-
-
-STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars-v1", "egs", "cma-egs")
+STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars", "egs", "cma-egs")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -93,9 +61,9 @@ if __name__ == "__main__":
         default=1.0,
     )
     parser.add_argument(
-        "--eta",
+        "--alpha",
         type=float,
-        default=0.03,
+        default=0.02,
     )
     parser.add_argument(
         "--n_hidden",
@@ -111,6 +79,7 @@ if __name__ == "__main__":
     parser.add_argument("--mirrored", action="store_true")
     parser.add_argument("--uncertainty_handled", action="store_true")
     parser.add_argument("--store_videos", action="store_true")
+    parser.add_argument("--ars_optimal", action="store_true")
     parser.add_argument(
         "--initialization",
         type=str,
@@ -119,7 +88,10 @@ if __name__ == "__main__":
     )
 
     parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="csa")
-    parser.add_argument("--env_name", type=str, default="LunarLander-v2", choices=ENVS)
+    parser.add_argument(
+        "--env_name", type=str, default="LunarLander-v2", 
+        choices=ENVIRONMENTS.keys()
+    )
     parser.add_argument("--dont_eval_total_timesteps", action="store_true")
 
     parser.add_argument(
@@ -133,23 +105,22 @@ if __name__ == "__main__":
         default=None,
     )
     
-    
     args = parser.parse_args()
-
+  
     t = time.time()
+    env_setting = ENVIRONMENTS[args.env_name]
 
     if not os.path.isdir(DATA):
         os.makedirs(DATA)
-
-    spec = gym.make(args.env_name).spec
+   
     if args.n_timesteps is None:
-        args.n_timesteps = spec.max_episode_steps
+        args.n_timesteps = env_setting.max_episode_steps
 
     if args.budget is None:
-        args.budget = BUDGETS[ENVS.index(args.env_name)]
+        args.budget = env_setting.budget
 
     print(args)
-    print(spec)
+    print(env_setting)
 
     np.random.seed(args.seed)
     plot = True
@@ -158,18 +129,18 @@ if __name__ == "__main__":
         uh = 'UH-'
 
     mirrored = ''
-    if args.mirrored and args.strategy != "ars-v1":
+    if args.mirrored and args.strategy != "ars":
         mirrored = "-mirrored"
 
     data_folder = f"{DATA}/{args.env_name}/{uh}{args.strategy}{mirrored}/{t}"
     os.makedirs(data_folder, exist_ok=True)
-
+    
     obj = Objective(
+        env_setting,
         args.n_episodes,
         args.n_timesteps,
         args.n_hidden,
         args.n_layers,
-        env_name=args.env_name,
         normalized=args.normalized,
         no_bias=not args.with_bias,
         eval_total_timesteps=not args.dont_eval_total_timesteps,
@@ -231,11 +202,17 @@ if __name__ == "__main__":
                 mirrored=args.mirrored
             )
 
-        elif args.strategy == "ars-v1":
-            optimizer = ARSV1(
+        elif args.strategy == "ars":
+            if args.ars_optimal and (params:=ARS_OPTIMAL_PARAMETERS.get(args.env_name)):
+                args.alpha = params.alpha
+                args.sigma0 = params.sigma
+                args.lamb = params.lambda0
+
+            optimizer = ARS(
                 obj.n,
                 args.budget,
                 sigma0=args.sigma0,
+                alpha=args.alpha, 
                 data_folder=data_folder,
                 test_gen=args.test_every_nth_iteration,
                 mu=args.mu, 

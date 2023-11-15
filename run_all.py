@@ -2,12 +2,12 @@ import os
 import time
 import subprocess
 
-from main import STRATEGIES, ENVS
+from main import STRATEGIES
 
-SEEDS = range(1, 6)
+SEEDS = range(20, 26)
 
-for env in ['HalfCheetah-v4']:
-    for strat in STRATEGIES:
+for env in ['Hopper-v4']:
+    for strat in ("maes", "ars", "csa", "cma-egs"):
         for seed in SEEDS:
             subprocess.Popen([
                 "python",
@@ -19,10 +19,9 @@ for env in ['HalfCheetah-v4']:
                 "--seed",
                 str(seed),
                 "--sigma0",
-                "0.5",
-                "--initialization",
-                "zero",
-                "--normalized"
+                "0.1",
+                "--normalized",
+                "--ars_optimal"
             ], start_new_session=True, env=dict(os.environ, MUJOCO_GL="egl"))
             time.sleep(1)
 

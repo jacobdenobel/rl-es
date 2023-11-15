@@ -59,7 +59,7 @@ class Logger:
 
 
 class State:
-    def __init__(self, data_folder, test_gen, lamb, revaluate_best_after: int = None):
+    def __init__(self, name, data_folder, test_gen, lamb, revaluate_best_after: int = None):
         self.counter = 0
         self.best = Solution()
         self.mean = Solution()
@@ -69,6 +69,7 @@ class State:
         self.data_folder = data_folder
         self.logger = Logger(data_folder)
         self.test_gen: int = test_gen
+        self.name = name
         self.lamb: int = lamb
         self.mean_test = None
         self.best_test = None
@@ -104,7 +105,7 @@ class State:
         self.mean = mean
 
         print(
-            f"counter: {self.counter}, dt: {dt:.3f} n_evals {problem.n_evals}, "
+            f"{self.name}, counter: {self.counter}, dt: {dt:.3f} n_evals {problem.n_evals}, "
             f"best (train): {-self.best.y}, mean (train): {-mean.y}, sigma: {sigma} "
             f"best (test): {self.best_test}, mean (test): {self.mean_test}"
         )
@@ -241,12 +242,12 @@ class Weights:
         return np.sqrt(self.c_s * (2 - self.c_s) * self.mueff)
     
 
-def init_lambda(n, method="n/2"):
+def init_lambda(n, method="default"):
     """
         range:      2*mu < lambda < 2*n + 10 
         default:    4 + floor(3 * ln(n))     
-
     """
+
     if method == "default":
         return (4 + np.floor(3 * np.log(n))).astype(int) 
     
@@ -347,7 +348,7 @@ class DR1:
         init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         x_prime = init.get_x_prime(problem)
 
-        state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
+        state = State("DR1", self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
         weights = Weights(self.mu, self.lambda_, self.n)
 
@@ -434,7 +435,7 @@ class DR2:
         init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         x_prime = init.get_x_prime(problem)
 
-        state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
+        state = State("DR1", self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
@@ -509,7 +510,7 @@ class CSA:
         sigma = self.sigma0
         s = np.ones((self.n, 1))
 
-        state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
+        state = State("CSA", self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
@@ -584,7 +585,7 @@ class MAES:
         M = np.eye(self.n)
         s = np.ones((self.n, 1))
 
-        state = State(self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
+        state = State("MA-ES", self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
@@ -629,7 +630,22 @@ class MAES:
 
 
 @dataclass
-class ARSV1:
+class ARSSetting:
+    alpha: float
+    sigma: float
+    lambda0: int
+
+ARS_OPTIMAL_PARAMETERS = {
+    "Swimmer-v4": ARSSetting(0.02, 0.01, 1),
+    "Hopper-v4": ARSSetting(0.02, 0.02, 4),
+    "HalfCheetah-v4": ARSSetting(0.02, 0.03, 8),
+    "Walker2d-v4": ARSSetting(0.025, 0.01, 60),
+    "Ant-v4": ARSSetting(0.01, 0.025, 40),
+    "Humanoid-v4": ARSSetting(0.02, 0.0075, 230),
+}
+
+@dataclass
+class ARS:
     n: int
     budget: int = 25_000
     data_folder: str = None
@@ -648,8 +664,7 @@ class ARSV1:
         init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         m = init.get_x_prime(problem)
 
-
-        state = State(self.data_folder, self.test_gen, self.lambda_ * 2)
+        state = State("ARS", self.data_folder, self.test_gen, self.lambda_ * 2)
         try:
             while self.budget > problem.n_evals:
                 delta = np.random.normal(size=(self.n, self.lambda_))
@@ -680,7 +695,7 @@ class ARSV1:
                     problem,
                     Solution(-best_rewards[best_idx],  best.copy()),
                     Solution(-np.mean(best_rewards), m.copy()),
-                    sigma_rewards,
+                    self.sigma0,
                     f
                 )
         except KeyboardInterrupt:
@@ -710,7 +725,7 @@ class EGS:
         init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         m = init.get_x_prime(problem)
 
-        state = State(self.data_folder, self.test_gen, self.lambda_)
+        state = State("EGS", self.data_folder, self.test_gen, self.lambda_)
         sigma = self.sigma0
         try:
             while self.budget > problem.n_evals:
@@ -772,7 +787,7 @@ class CMA_EGS:
         gamma = 2 / pow(self.n + np.sqrt(2), 2)
         chi = 2 * self.n * (1 + (1 / beta))
 
-        state = State(self.data_folder, self.test_gen, self.lambda_)
+        state = State("CMA-EGS", self.data_folder, self.test_gen, self.lambda_)
         sigma = self.sigma0
         try:
             while self.budget > problem.n_evals:
