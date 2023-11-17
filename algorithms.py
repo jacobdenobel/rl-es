@@ -105,7 +105,7 @@ class State:
         self.mean = mean
 
         print(
-            f"{self.name}, counter: {self.counter}, dt: {dt:.3f} n_evals {problem.n_evals}, "
+            f"{self.name}, counter: {self.counter}, dt: {dt:.3f} n_evals {problem.n_evals}, n_episodes: {problem.n_train_episodes} "
             f"best (train): {-self.best.y}, mean (train): {-mean.y}, sigma: {sigma} "
             f"best (test): {self.best_test}, mean (test): {self.mean_test}"
         )
@@ -634,13 +634,21 @@ class ARSSetting:
     alpha: float
     sigma: float
     lambda0: int
+    mu: int = None 
+
+    def __post_init__(self):
+        self.mu = self.mu or self.lambda0
 
 ARS_OPTIMAL_PARAMETERS = {
     "Swimmer-v4": ARSSetting(0.02, 0.01, 1),
-    "Hopper-v4": ARSSetting(0.02, 0.02, 4),
-    "HalfCheetah-v4": ARSSetting(0.02, 0.03, 8),
-    "Walker2d-v4": ARSSetting(0.025, 0.01, 60),
-    "Ant-v4": ARSSetting(0.01, 0.025, 40),
+    # "Hopper-v4": ARSSetting(0.02, 0.02, 4),
+    "Hopper-v4": ARSSetting(0.01, 0.025, 8, 4),
+    # "HalfCheetah-v4": ARSSetting(0.02, 0.03, 8),
+    "HalfCheetah-v4": ARSSetting(0.02, 0.03, 32, 4),
+    # "Walker2d-v4": ARSSetting(0.025, 0.01, 60),
+    "Walker2d-v4": ARSSetting(0.03, 0.025, 40, 30),
+    # "Ant-v4": ARSSetting(0.01, 0.025, 40),
+    "Ant-v4": ARSSetting(0.015, 0.025, 60, 20),
     "Humanoid-v4": ARSSetting(0.02, 0.0075, 230),
 }
 
@@ -677,15 +685,16 @@ class ARS:
                 
                 best_rewards = np.maximum(neg_reward, pos_reward)
                 idx = np.argsort(best_rewards)[::-1]
+                mu_best = idx[: self.mu]
 
-                f = np.r_[neg_reward, pos_reward]
+                f = np.r_[neg_reward[mu_best], pos_reward[mu_best]]
                 sigma_rewards = f.std() + 1e-12
                 weight = self.alpha / (self.lambda_ * sigma_rewards)
 
                 delta_rewards = pos_reward - neg_reward
-                m += (weight * (delta_rewards[idx] * delta[:, idx]).sum(axis=1, keepdims=True))
+                m += (weight * (delta_rewards[mu_best] * delta[:, mu_best]).sum(axis=1, keepdims=True))
 
-                best_idx = idx[0]
+                best_idx = mu_best[0]
                 if neg_reward[best_idx] > pos_reward[best_idx]:
                     best = neg[:, best_idx]
                 else:

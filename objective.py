@@ -8,7 +8,7 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 from gymnasium.utils.save_video import save_video
 
-from network import Network, identity, MinMaxNormalizer, argmax
+from network import Network, identity, MinMaxNormalizer, argmax, softmax
 from skimage.measure import block_reduce
 
 
@@ -46,13 +46,21 @@ ENVIRONMENTS = {
         "BipedalWalker-v3", 20_000, lambda x: np.clip(x, -1, 1)
     ),
     # "Swimmer-v4": EnvSetting("Swimmer-v4", 10_000),
-    "Hopper-v4": EnvSetting("Hopper-v4", 20_000, lambda x: x - 1),
-    "HalfCheetah-v4": EnvSetting("HalfCheetah-v4", 20_000),
-    "Walker2d-v4": EnvSetting("Walker2d-v4", 100_000, lambda x: x - 1),
-    "Ant-v4": EnvSetting("Ant-v4", 100_000, lambda x: x - 1),
-    "Humanoid-v4": EnvSetting("Humanoid-v4", 500_000, lambda x: x - 5),
+    "Hopper-v4": EnvSetting(
+        "Hopper-v4", 10_000, lambda x: x - 1, last_activation=np.tanh
+    ),
+    "HalfCheetah-v4": EnvSetting("HalfCheetah-v4", 10_000, last_activation=np.tanh),
+    "Walker2d-v4": EnvSetting(
+        "Walker2d-v4", 50_000, lambda x: x - 1, last_activation=np.tanh
+    ),
+    "Ant-v4": EnvSetting("Ant-v4", 50_000, lambda x: x - 1, last_activation=np.tanh),
+    "Humanoid-v4": EnvSetting(
+        "Humanoid-v4",
+        500_000,
+        lambda x: x - 5,
+        last_activation=lambda x: 0.4 * np.tanh(x),
+    ),
 }
-
 
 
 def rgb_to_gray_flat(observations):
@@ -64,6 +72,7 @@ def rgb_to_gray_flat(observations):
 class Normalizer:
     def __init__(self, nb_inputs):
         self.mean = np.zeros(nb_inputs)
+        self.var = np.ones(nb_inputs)
         self.std = np.ones(nb_inputs)
 
     def observe(self, _):
@@ -76,18 +85,23 @@ class Normalizer:
 class Standardizer(Normalizer):
     def __init__(self, nb_inputs):
         super().__init__(nb_inputs)
-        self.k = 0
+        self.k = nb_inputs
         self.s = np.zeros(nb_inputs)
 
     def observe(self, X):
         for x in X:
             self.k += 1
-            delta = x - self.mean
+            delta = x - self.mean.copy()
             self.mean += delta / self.k
             self.s += delta * (x - self.mean)
 
-        if self.k > 1:
-            self.std = np.sqrt(self.s / (self.k - 1)).clip(1e-8)
+        self.var = self.s / (self.k - 1)
+        self.std = np.sqrt(self.var)
+
+
+def regularize(x, y, alpha=.1):
+    reg = np.power(x, 2).sum(axis=0) * np.abs(y) * alpha
+    return y + reg     
 
 
 @dataclass
@@ -101,8 +115,8 @@ class Objective:
     n: int = None
     parallel: bool = True
     n_test_episodes: int = 10
-    normalized: bool = True
-    no_bias: bool = False
+    normalized: bool = False
+    bias: bool = False
     eval_total_timesteps: bool = True
     store_video: bool = True
     aggregator: callable = np.mean
@@ -110,6 +124,7 @@ class Objective:
     n_train_episodes: int = 0
     n_evals: int = 0
     data_folder: str = None
+    regularized: bool = False
 
     def __post_init__(self):
         if self.normalized:
@@ -123,7 +138,7 @@ class Objective:
             self.n_hidden,
             self.n_layers,
             self.setting.last_activation,
-            not self.no_bias,
+            self.bias,
         )
         self.n = self.net.n_weights
         self.nets = []
@@ -142,7 +157,6 @@ class Objective:
             f = self.eval_parallel(x)
         else:
             f = np.array([self.eval_sequential(xi) for xi in x.T])
-
         for y, xi in zip(f, x.T):
             self.n_evals += 1
             self.train_writer.write(f"{self.n_evals}, {y}, {', '.join(map(str, xi))}\n")
@@ -154,6 +168,7 @@ class Objective:
         self.net.set_weights(x)
 
         data_over_time = np.empty((self.n_timesteps, 2, self.n_episodes))
+    
         for t in range(self.n_timesteps):
             actions = self.net(self.normalizer(observations))
             self.normalizer.observe(observations)
@@ -161,13 +176,20 @@ class Objective:
             rewards = self.setting.reward_shaping(rewards)
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
 
+            if not self.eval_total_timesteps and np.logical_or(dones, trunc):
+                break
+
         returns = []
         for i in range(self.n_episodes):
-            returns.extend(self.calculate_returns(data_over_time[:, :, i]))
+            ret, n_eps, n_timesteps = self.calculate_returns(data_over_time[:, :, i])
+            self.n_train_timesteps += n_timesteps
+            self.n_train_episodes += n_eps
+            returns.extend(ret)
 
-        self.n_train_timesteps += self.n_timesteps * self.n_episodes
-        self.n_train_episodes += self.n_episodes
-        return -self.aggregator(returns)
+        y = -self.aggregator(returns)
+        if self.regularized:
+            y = regularize(x, y) 
+        return y
 
     def eval_parallel(self, x):
         n = x.shape[1]
@@ -179,7 +201,7 @@ class Objective:
                     self.n_hidden,
                     self.n_layers,
                     self.setting.last_activation,
-                    not self.no_bias,
+                    self.bias,
                 )
                 for _ in range(n)
             ]
@@ -191,12 +213,13 @@ class Objective:
         observations, *_ = self.envs.reset()
 
         n_total_episodes = action_shape = self.n_episodes * n
-        
-        if not self.setting.is_discrete:
-            action_shape = (action_shape, self.setting.action_size)
 
         actions = np.ones(action_shape, dtype=int)
-        data_over_time = np.empty((self.n_timesteps, 2, n_total_episodes))
+        if not self.setting.is_discrete:
+            action_shape = (action_shape, self.setting.action_size)
+            actions = np.ones(action_shape, dtype=float)
+        
+        data_over_time = np.zeros((self.n_timesteps, 2, n_total_episodes))
         for t in range(self.n_timesteps):
             for i, net in enumerate(self.nets):
                 idx = i * self.n_episodes
@@ -207,21 +230,25 @@ class Objective:
             observations, rewards, dones, trunc, *_ = self.envs.step(actions)
             rewards = self.setting.reward_shaping(rewards)
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
+            
+            first_ep_all_done = (data_over_time[:, 1, :].sum(axis=0) >= 1).all()
+            if not self.eval_total_timesteps and first_ep_all_done:
+                break
 
         aggregated_returns = np.empty(n)
         for k, j in enumerate(range(0, n_total_episodes, self.n_episodes)):
             returns = []
             for i in range(self.n_episodes):
-                returns.extend(self.calculate_returns(data_over_time[:, :, j + i]))
+                ret, n_eps, n_timesteps = self.calculate_returns(data_over_time[:, :, j + i])
+                self.n_train_timesteps += n_timesteps
+                self.n_train_episodes += n_eps
+                returns.extend(ret)
             aggregated_returns[k] = self.aggregator(returns)
 
-        if self.eval_total_timesteps:
-            self.n_train_timesteps += self.n_timesteps * self.n_episodes * n
-            self.n_train_episodes += self.n_episodes * n
-        else:
-            raise NotImplementedError()
-
-        return -aggregated_returns
+        y = -aggregated_returns
+        if self.regularized:
+            y = regularize(x, y)     
+        return y
 
     def calculate_returns(self, Y):
         _, idx = np.unique(np.cumsum(Y[:, 1]) - Y[:, 1], return_index=True)
@@ -230,11 +257,13 @@ class Objective:
             episodes = episodes[:-1]
 
         returns_ = [x.sum() for x in episodes]
+        n_timesteps = len(Y)
         if not self.eval_total_timesteps:
             returns_ = returns_[:1]
+            n_timesteps = len(episodes[0])
 
         # TODO: we can remove incomplete episodes from the last optionally
-        return returns_
+        return returns_, len(returns_), n_timesteps
 
     def test(self, x, render_mode=None, plot=False, name=None):
         self.net.set_weights(x)
@@ -251,7 +280,8 @@ class Objective:
                 ret = 0
                 step_index = 0
                 while not done:
-                    action, *_ = self.net(self.normalizer(observation.reshape(1, -1)))
+                    obs = self.normalizer(observation.reshape(1, -1))
+                    action, *_ = self.net(obs)
                     observation, reward, terminated, truncated, *_ = env.step(action)
                     done = terminated or truncated
                     ret += reward
@@ -260,6 +290,7 @@ class Objective:
                             f"step {step_index}, return {ret: .3f} {' ' * 25}", end="\r"
                         )
                     step_index += 1
+
                 if render_mode == "human":
                     print()
                 if render_mode == "rgb_array_list" and episode_index == 0:
@@ -274,10 +305,17 @@ class Objective:
                                 episode_index=0,
                                 name_prefix=name,
                             )
+                    render_mode = None
                     os.makedirs(f"{self.data_folder}/policies", exist_ok=True)
                     np.save(f"{self.data_folder}/policies/{name}", x)
-                    np.save(f"{self.data_folder}/policies/{name}-norm-std", self.normalizer.std)
-                    np.save(f"{self.data_folder}/policies/{name}-norm-mean", self.normalizer.mean)
+                    np.save(
+                        f"{self.data_folder}/policies/{name}-norm-std",
+                        self.normalizer.std,
+                    )
+                    np.save(
+                        f"{self.data_folder}/policies/{name}-norm-mean",
+                        self.normalizer.mean,
+                    )
                     render_mode = None
                 returns.append(ret)
                 self.n_test_evals += 1

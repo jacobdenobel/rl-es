@@ -10,7 +10,7 @@ from algorithms import MAES, DR1, ARS, CSA, DR2, EGS, CMA_EGS, ARS_OPTIMAL_PARAM
 from objective import Objective, ENVIRONMENTS
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
-STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars", "egs", "cma-egs")
+STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars", "ars-v2", "egs", "cma-egs")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sigma0",
         type=float,
-        default=1.0,
+        default=0.1,
     )
     parser.add_argument(
         "--alpha",
@@ -80,6 +80,7 @@ if __name__ == "__main__":
     parser.add_argument("--uncertainty_handled", action="store_true")
     parser.add_argument("--store_videos", action="store_true")
     parser.add_argument("--ars_optimal", action="store_true")
+    parser.add_argument("--regularized", action="store_true")
     parser.add_argument(
         "--initialization",
         type=str,
@@ -92,7 +93,7 @@ if __name__ == "__main__":
         "--env_name", type=str, default="LunarLander-v2", 
         choices=ENVIRONMENTS.keys()
     )
-    parser.add_argument("--dont_eval_total_timesteps", action="store_true")
+    parser.add_argument("--eval_total_timesteps", action="store_true")
 
     parser.add_argument(
         "--play",
@@ -124,17 +125,29 @@ if __name__ == "__main__":
 
     np.random.seed(args.seed)
     plot = True
-    uh = ''
-    if args.uncertainty_handled:
-        uh = 'UH-'
-
-    mirrored = ''
-    if args.mirrored and args.strategy != "ars":
-        mirrored = "-mirrored"
-
-    data_folder = f"{DATA}/{args.env_name}/{uh}{args.strategy}{mirrored}/{t}"
-    os.makedirs(data_folder, exist_ok=True)
     
+    strategy_name = args.strategy
+    if not args.strategy.startswith("ars"):
+        if args.uncertainty_handled:
+            strategy_name =  f'UH-{strategy_name}'
+        if args.mirrored:
+            strategy_name =  f'{strategy_name}-mirrored'
+        if args.regularized:
+            strategy_name =  f'{strategy_name}-reg'
+        if args.normalized:
+            strategy_name =  f'{strategy_name}-norm'
+
+
+    data_folder = f"{DATA}/{args.env_name}/{strategy_name}/{t}"
+    os.makedirs(data_folder, exist_ok=True)
+
+    if args.strategy == "ars-v2":
+        args.normalized = True
+        args.regularize = False
+    elif args.strategy == "ars":
+        args.normalized = False
+        args.regularize = False
+
     obj = Objective(
         env_setting,
         args.n_episodes,
@@ -142,11 +155,12 @@ if __name__ == "__main__":
         args.n_hidden,
         args.n_layers,
         normalized=args.normalized,
-        no_bias=not args.with_bias,
-        eval_total_timesteps=not args.dont_eval_total_timesteps,
+        bias=args.with_bias,
+        eval_total_timesteps=args.eval_total_timesteps,
         n_test_episodes=args.n_test_episodes,
         store_video=args.store_videos,
-        data_folder=data_folder
+        data_folder=data_folder,
+        regularized=args.regularized
     )
     if args.play is None:
         if args.strategy == "maes":
@@ -202,11 +216,12 @@ if __name__ == "__main__":
                 mirrored=args.mirrored
             )
 
-        elif args.strategy == "ars":
+        elif args.strategy == "ars" or args.strategy == "ars-v2":
             if args.ars_optimal and (params:=ARS_OPTIMAL_PARAMETERS.get(args.env_name)):
                 args.alpha = params.alpha
                 args.sigma0 = params.sigma
                 args.lamb = params.lambda0
+                args.mu = params.mu
 
             optimizer = ARS(
                 obj.n,
@@ -260,9 +275,15 @@ if __name__ == "__main__":
         best, mean = best.x, mean.x
     else:
         data_folder = args.play
-        best = np.load(os.path.join(args.play, "best.npy"))
-        mean = np.load(os.path.join(args.play, "mean.npy"))
-        plot = False
+        weights = np.load(f"{args.play}.npy")
+        
+        obj.normalizer.mean = np.load(f"{args.play}-norm-mean.npy")
+        obj.normalizer.std = np.load(f"{args.play}-norm-std.npy")
+        obj.store_video = True
+        obj.n_test_episodes = 1
+        obj.data_folder = os.path.dirname(data_folder)
+        obj.test(weights, render_mode="rgb_array_list", name="test")
+    
     
     # best_test = obj.play(best, data_folder, "best", plot)
     # print("Test with best x (median max):", best_test)
