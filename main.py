@@ -6,11 +6,11 @@ from dataclasses import dataclass
 
 import numpy as np
 import gymnasium as gym
-from algorithms import MAES, DR1, ARS, CSA, DR2, EGS, CMA_EGS, ARS_OPTIMAL_PARAMETERS
+from algorithms import MAES, DR1, ARS, CSA, DR2, EGS, CMA_EGS, ARS_OPTIMAL_PARAMETERS, CSA_EGS
 from objective import Objective, ENVIRONMENTS
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
-STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars", "ars-v2", "egs", "cma-egs")
+STRATEGIES = ("maes", "dr1", "csa", "dr2",  "ars", "ars-v2", "egs", "cma-egs", "csa-egs")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sigma0",
         type=float,
-        default=0.1,
+        default=None,
     )
     parser.add_argument(
         "--alpha",
@@ -81,6 +81,8 @@ if __name__ == "__main__":
     parser.add_argument("--store_videos", action="store_true")
     parser.add_argument("--ars_optimal", action="store_true")
     parser.add_argument("--regularized", action="store_true")
+    parser.add_argument("--seed_train_envs", action="store_true")
+    parser.add_argument("--scale_by_std", action="store_true")
     parser.add_argument(
         "--initialization",
         type=str,
@@ -136,10 +138,20 @@ if __name__ == "__main__":
             strategy_name =  f'{strategy_name}-reg'
         if args.normalized:
             strategy_name =  f'{strategy_name}-norm'
+        if args.sigma0 is None:
+            strategy_name =  f'{strategy_name}-sigma-default'
+            n = env_setting.action_size * env_setting.state_size
+            args.sigma0 = min(max(1 / n, 0.005), .1)
+            print("using sigma0", args.sigma0)
+        else:
+            strategy_name =  f'{strategy_name}-sigma-{args.sigma0:.2e}'
 
+        if args.scale_by_std:
+            strategy_name =  f'{strategy_name}-std'
 
     data_folder = f"{DATA}/{args.env_name}/{strategy_name}/{t}"
-    os.makedirs(data_folder, exist_ok=True)
+    if args.play is None:
+        os.makedirs(data_folder, exist_ok=True)
 
     if args.strategy == "ars-v2":
         args.normalized = True
@@ -160,9 +172,11 @@ if __name__ == "__main__":
         n_test_episodes=args.n_test_episodes,
         store_video=args.store_videos,
         data_folder=data_folder,
-        regularized=args.regularized
+        regularized=args.regularized,
+        seed_train_envs=args.seed if args.seed_train_envs else None
     )
     if args.play is None:
+        obj.open()
         if args.strategy == "maes":
             optimizer = MAES(
                 obj.n,
@@ -174,7 +188,8 @@ if __name__ == "__main__":
                 initialization=args.initialization,
                 uncertainty_handling=args.uncertainty_handled,
                 test_gen=args.test_every_nth_iteration,
-                mirrored=args.mirrored
+                mirrored=args.mirrored,
+                scale_by_std=args.scale_by_std
             )
         elif args.strategy == "dr1":
             optimizer = DR1(
@@ -257,7 +272,17 @@ if __name__ == "__main__":
                 mu=args.mu, 
                 initialization=args.initialization,
             )
-
+        elif args.strategy == "csa-egs":
+            optimizer = CSA_EGS(
+                obj.n,
+                args.budget,
+                data_folder=data_folder,
+                test_gen=args.test_every_nth_iteration,
+                sigma0=args.sigma0,
+                lambda_=args.lamb,
+                mu=args.mu, 
+                initialization=args.initialization,
+            )
         else:
             raise ValueError()
 
@@ -273,6 +298,7 @@ if __name__ == "__main__":
         np.save(f"{data_folder}/best.npy", best.x)
         np.save(f"{data_folder}/mean.npy", mean.x)
         best, mean = best.x, mean.x
+        
     else:
         data_folder = args.play
         weights = np.load(f"{args.play}.npy")
@@ -283,7 +309,6 @@ if __name__ == "__main__":
         obj.n_test_episodes = 1
         obj.data_folder = os.path.dirname(data_folder)
         obj.test(weights, render_mode="rgb_array_list", name="test")
-    
     
     # best_test = obj.play(best, data_folder, "best", plot)
     # print("Test with best x (median max):", best_test)

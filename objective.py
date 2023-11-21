@@ -36,16 +36,18 @@ class EnvSetting:
         else:
             self.action_size = env.action_space.shape[0]
 
-
 ENVIRONMENTS = {
     "CartPole-v1": EnvSetting("CartPole-v1", 1000),
-    "Acrobot-v1": EnvSetting("Acrobot-v1", 1_000),
+    "Acrobot-v1": EnvSetting("Acrobot-v1", 5_000),
+    "Pendulum-v1": EnvSetting("Pendulum-v1", 5_000,  last_activation=lambda x: 2 * np.tanh(x)),
     "MountainCar-v0": EnvSetting("MountainCar-v0", 5_000),
-    "LunarLander-v2": EnvSetting("LunarLander-v2", 5_000),
+    "LunarLander-v2": EnvSetting("LunarLander-v2", 10_000),
     "BipedalWalker-v3": EnvSetting(
         "BipedalWalker-v3", 20_000, lambda x: np.clip(x, -1, 1)
     ),
     # "Swimmer-v4": EnvSetting("Swimmer-v4", 10_000),
+    "Reacher-v4": EnvSetting("Reacher-v4", 20_000, last_activation=np.tanh),
+    "InvertedPendulum-v4": EnvSetting("InvertedPendulum-v4", 5_000, last_activation=lambda x: 3 * np.tanh(x)),
     "Hopper-v4": EnvSetting(
         "Hopper-v4", 10_000, lambda x: x - 1, last_activation=np.tanh
     ),
@@ -61,6 +63,28 @@ ENVIRONMENTS = {
         last_activation=lambda x: 0.4 * np.tanh(x),
     ),
 }
+
+CLASSIC_CONTROL = [
+    "CartPole-v1",
+    "Acrobot-v1",
+    "Pendulum-v1",
+    "MountainCar-v0",
+]
+
+BOX2D = [
+    "LunarLander-v2",
+    "BipedalWalker-v3"
+]
+
+MUJOCO = [
+    "Reacher-v4",
+    "InvertedPendulum-v4",
+    "Hopper-v4",
+    "HalfCheetah-v4",
+    "Walker2d-v4",
+    "Ant-v4",
+    "Humanoid-v4",   
+]
 
 
 def rgb_to_gray_flat(observations):
@@ -97,11 +121,12 @@ class Standardizer(Normalizer):
 
         self.var = self.s / (self.k - 1)
         self.std = np.sqrt(self.var)
+        self.std[self.std < 1e-7] = np.inf
 
 
-def regularize(x, y, alpha=.1):
+def regularize(x, y, alpha=0.1):
     reg = np.power(x, 2).sum(axis=0) * np.abs(y) * alpha
-    return y + reg     
+    return y + reg
 
 
 @dataclass
@@ -122,9 +147,11 @@ class Objective:
     aggregator: callable = np.mean
     n_train_timesteps: int = 0
     n_train_episodes: int = 0
+    n_test_evals: int = 0
     n_evals: int = 0
     data_folder: str = None
     regularized: bool = False
+    seed_train_envs: int = None
 
     def __post_init__(self):
         if self.normalized:
@@ -142,6 +169,8 @@ class Objective:
         )
         self.n = self.net.n_weights
         self.nets = []
+
+    def open(self):
         self.train_writer = open(
             os.path.join(self.data_folder, "train_evals.csv"), "a+"
         )
@@ -150,7 +179,6 @@ class Objective:
         header = f"evals, fitness, {header}\n"
         self.train_writer.write(header)
         self.test_writer.write(header)
-        self.n_test_evals = 0
 
     def __call__(self, x):
         if self.parallel:
@@ -162,13 +190,21 @@ class Objective:
             self.train_writer.write(f"{self.n_evals}, {y}, {', '.join(map(str, xi))}\n")
         return f
 
+    def reset_envs(self, envs):
+        seeds = None
+        if self.seed_train_envs is not None:
+            seeds = [self.seed_train_envs * 7 * i for i in range(1, 1 + envs.num_envs)]
+        observations, *_ = envs.reset(seed=seeds)
+        return observations
+
     def eval_sequential(self, x):
         envs = gym.make_vec(self.setting.name, num_envs=self.n_episodes)
-        observations, _ = envs.reset()
+        observations = self.reset_envs(envs)
+
         self.net.set_weights(x)
 
         data_over_time = np.empty((self.n_timesteps, 2, self.n_episodes))
-    
+
         for t in range(self.n_timesteps):
             actions = self.net(self.normalizer(observations))
             self.normalizer.observe(observations)
@@ -188,7 +224,7 @@ class Objective:
 
         y = -self.aggregator(returns)
         if self.regularized:
-            y = regularize(x, y) 
+            y = regularize(x, y)
         return y
 
     def eval_parallel(self, x):
@@ -210,7 +246,7 @@ class Objective:
         for net, w in zip(self.nets, x.T):
             net.set_weights(w)
 
-        observations, *_ = self.envs.reset()
+        observations = self.reset_envs(self.envs)
 
         n_total_episodes = action_shape = self.n_episodes * n
 
@@ -218,7 +254,7 @@ class Objective:
         if not self.setting.is_discrete:
             action_shape = (action_shape, self.setting.action_size)
             actions = np.ones(action_shape, dtype=float)
-        
+
         data_over_time = np.zeros((self.n_timesteps, 2, n_total_episodes))
         for t in range(self.n_timesteps):
             for i, net in enumerate(self.nets):
@@ -230,7 +266,7 @@ class Objective:
             observations, rewards, dones, trunc, *_ = self.envs.step(actions)
             rewards = self.setting.reward_shaping(rewards)
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
-            
+
             first_ep_all_done = (data_over_time[:, 1, :].sum(axis=0) >= 1).all()
             if not self.eval_total_timesteps and first_ep_all_done:
                 break
@@ -239,7 +275,9 @@ class Objective:
         for k, j in enumerate(range(0, n_total_episodes, self.n_episodes)):
             returns = []
             for i in range(self.n_episodes):
-                ret, n_eps, n_timesteps = self.calculate_returns(data_over_time[:, :, j + i])
+                ret, n_eps, n_timesteps = self.calculate_returns(
+                    data_over_time[:, :, j + i]
+                )
                 self.n_train_timesteps += n_timesteps
                 self.n_train_episodes += n_eps
                 returns.extend(ret)
@@ -247,7 +285,7 @@ class Objective:
 
         y = -aggregated_returns
         if self.regularized:
-            y = regularize(x, y)     
+            y = regularize(x, y)
         return y
 
     def calculate_returns(self, Y):

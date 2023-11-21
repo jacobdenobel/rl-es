@@ -59,7 +59,7 @@ class Logger:
 
 
 class State:
-    def __init__(self, name, data_folder, test_gen, lamb, revaluate_best_after: int = None):
+    def __init__(self, name, data_folder, test_gen, lamb, revaluate_best_after: int = 1):
         self.counter = 0
         self.best = Solution()
         self.mean = Solution()
@@ -93,7 +93,7 @@ class State:
 
         if self.revaluate_best_every is not None and self.revaluate_best_every < self.time_since_best_update:
             self.time_since_best_update = 0
-            self.best.y = problem.eval_sequential(self.best.x)
+            self.best.y, *_ = problem.test(self.best.x)
 
         toc = time.perf_counter()
         dt = toc - self.tic
@@ -561,6 +561,7 @@ class MAES:
     uncertainty_handling: bool = False
     mirrored: bool = True
     revaluate_best_after: int = None
+    scale_by_std: bool = False
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or init_lambda(self.n)
@@ -600,10 +601,17 @@ class MAES:
                 idx, f = uch.update(problem, f, X, self.n, self.lambda_, state)
                 mu_best = idx[: self.mu]
                 idx_min = idx[0]
+                
                 z_prime = np.sum(weights.w * Z[:, mu_best], axis=1, keepdims=True)
                 d_prime = np.sum(weights.w * D[:, mu_best], axis=1, keepdims=True)
+                
+                if self.scale_by_std:
+                    d_prime = (1 / f.std()) * d_prime
+
                 x_prime = x_prime + (sigma * d_prime)
                 s = ((1 - c_s) * s) + (sqrt_s * z_prime)
+
+
 
                 if uch.should_update():
                     M = (
@@ -667,6 +675,7 @@ class ARS:
     def __post_init__(self):
         self.lambda_ = self.lambda_ or int(init_lambda(self.n) / 2)
         self.mu = self.mu or self.lambda_
+        self.sigma0 = self.sigma0 or 0.03
 
     def __call__(self, problem: Objective):
         init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
@@ -687,12 +696,11 @@ class ARS:
                 idx = np.argsort(best_rewards)[::-1]
                 mu_best = idx[: self.mu]
 
-                f = np.r_[neg_reward[mu_best], pos_reward[mu_best]]
-                sigma_rewards = f.std() + 1e-12
-                weight = self.alpha / (self.lambda_ * sigma_rewards)
-
-                delta_rewards = pos_reward - neg_reward
-                m += (weight * (delta_rewards[mu_best] * delta[:, mu_best]).sum(axis=1, keepdims=True))
+                rewards = np.c_[pos_reward[mu_best], neg_reward[mu_best]]
+                sigma_rewards = rewards.std() + 1e-12
+                weight = self.alpha / (self.mu * sigma_rewards)
+                delta_rewards =  rewards[:, 0] -  rewards[:, 1]
+                m += (weight * (delta_rewards * delta[:, mu_best]).sum(axis=1, keepdims=True))
 
                 best_idx = mu_best[0]
                 if neg_reward[best_idx] > pos_reward[best_idx]:
@@ -705,7 +713,7 @@ class ARS:
                     Solution(-best_rewards[best_idx],  best.copy()),
                     Solution(-np.mean(best_rewards), m.copy()),
                     self.sigma0,
-                    f
+                    np.r_[pos_reward, neg_reward]
                 )
         except KeyboardInterrupt:
             pass
@@ -831,6 +839,67 @@ class CMA_EGS:
                     C = np.triu(C) + np.triu(C, 1).T
                     D, B = np.linalg.eigh(C)
                     D = np.sqrt(D).reshape(-1, 1)
+
+                f = np.r_[f_pos, f_neg]
+                X = np.hstack([y_pos, y_neg])
+                best_idx = np.argmin(f)
+
+                state.update(
+                    problem,
+                    Solution(f[best_idx],  X[:, best_idx].copy()),
+                    Solution(np.mean(f), m.copy()),
+                    sigma,
+                    f
+                )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            state.logger.close()
+        return state.best, state.mean
+
+
+@dataclass
+class CSA_EGS:
+    n: int
+    budget: int = 25_000
+    data_folder: str = None
+    test_gen: int = 25
+    sigma0: float = 0.02     
+    lambda_: int = 16        
+    mu: int = None             
+    kappa: float = 2.0    
+    initialization: str = "zero"
+
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or int(init_lambda(self.n) / 2)
+        self.mu = 1
+
+    def __call__(self, problem: Objective):
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        m = init.get_x_prime(problem)
+
+        ps = np.zeros((self.n, 1))
+
+        beta = 4 / (self.n + 4)
+        chi = 2 * self.n * (1 + (1 / beta))
+
+        state = State("CSA-EGS", self.data_folder, self.test_gen, self.lambda_)
+        sigma = self.sigma0
+        try:
+            while self.budget > problem.n_evals:
+                Z = np.random.normal(size=(self.n, self.lambda_))
+                y_pos = m + (sigma * Z)
+                y_neg = m - (sigma * Z)
+                f_pos = problem(y_pos)
+                f_neg = problem(y_neg)
+
+                z_avg  = np.sum((f_neg - f_pos) * Z, axis=1, keepdims=True)
+                z_norm = z_avg / np.linalg.norm(z_avg)
+                z_prog = (np.sqrt(self.n) / self.kappa) * z_norm
+                m = m + (sigma * z_prog)
+
+                ps = ((1 - beta) * ps) + (self.kappa * np.sqrt(beta * (2 - beta)) * z_prog)
+                sigma *= np.exp((pow(np.linalg.norm(ps), 2) - self.n) / chi)
 
                 f = np.r_[f_pos, f_neg]
                 X = np.hstack([y_pos, y_neg])
