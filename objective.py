@@ -49,7 +49,7 @@ ENVIRONMENTS = {
     "Reacher-v4": EnvSetting("Reacher-v4", 20_000, last_activation=np.tanh),
     "InvertedPendulum-v4": EnvSetting("InvertedPendulum-v4", 5_000, last_activation=lambda x: 3 * np.tanh(x)),
     "Hopper-v4": EnvSetting(
-        "Hopper-v4", 10_000, lambda x: x - 1, last_activation=np.tanh
+        "Hopper-v4", 20_000, lambda x: x - 1, last_activation=np.tanh
     ),
     "HalfCheetah-v4": EnvSetting("HalfCheetah-v4", 10_000, last_activation=np.tanh),
     "Walker2d-v4": EnvSetting(

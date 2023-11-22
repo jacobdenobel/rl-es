@@ -5,9 +5,10 @@ import subprocess
 from main import STRATEGIES
 from objective import CLASSIC_CONTROL, BOX2D, MUJOCO
 
-SEEDS = range(0, 30)
+SEEDS = range(0, 10)
 
-for env in ["BipedalWalker-v3"]:
+for env in ["Hopper-v4", "HalfCheetah-v4", "Walker2d-v4", "Ant-v4"]:
+    time.sleep(2 * 60 * 60)
     for strat in STRATEGIES:
         for seed in SEEDS:
             subprocess.Popen([
@@ -19,8 +20,8 @@ for env in ["BipedalWalker-v3"]:
                 strat,
                 "--seed",
                 str(7 * seed),
-                "--sigma0",
-                "0.1",
+#                "--sigma0",
+#                "0.1",
                 "--normalized",
                 "--ars_optimal",
             ], start_new_session=True, env=dict(os.environ, MUJOCO_GL="egl"))
