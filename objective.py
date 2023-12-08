@@ -15,6 +15,37 @@ from skimage.measure import block_reduce
 def uint8tofloat(obs):
     return obs.astype(float) / 255
 
+
+
+class FireResetEnv(gym.Wrapper):
+    """
+    Take action on reset and loss of life for environments that are fixed until firing.
+
+    """
+
+    def __init__(self, env: gym.Env):
+        gym.Wrapper.__init__(self, env)
+        assert env.unwrapped.get_action_meanings()[1] == "FIRE"
+        assert len(env.unwrapped.get_action_meanings()) >= 3
+        self.info = dict()
+
+    def reset(self, **kwargs) -> np.ndarray:
+        self.env.reset(**kwargs)
+        obs, _, done, trunc, self.info = self.env.step(1)
+        # if done:
+        #     self.env.reset(**kwargs)
+        # obs, _, done, trunc, info = self.env.step(1)
+        # if done:
+        #     self.env.reset(**kwargs)
+        return obs, self.info
+
+    def step(self, *args, **kwargs):
+        obs, rew, done, trunc, info = self.env.step(*args, **kwargs)
+        if info.get("lives") is not None and info.get("lives") != self.info.get("lives"):
+            obs, rew, done, trunc, info = self.env.step(1)
+        self.info = info
+        return obs, rew, done, trunc, info
+
 @dataclass
 class EnvSetting:
     name: str
@@ -28,6 +59,7 @@ class EnvSetting:
     is_discrete: bool = True
     env_kwargs: dict = None
     obs_mapper: callable = identity
+    wrapper: object = None
 
     def __post_init__(self):
         if self.env_kwargs is None:
@@ -45,7 +77,14 @@ class EnvSetting:
 
         if self.max_episode_steps is None:
             self.max_episode_steps = int(env.spec.kwargs['max_num_frames_per_episode'] / env.spec.kwargs['frameskip'])
-            
+
+    def make(self, **kwargs):
+        env = gym.make(self.name, **{**self.env_kwargs, **kwargs})
+        if self.wrapper is not None:
+            env = FireResetEnv(env)
+        return env
+    
+
 ENVIRONMENTS = {
     "CartPole-v1": EnvSetting("CartPole-v1", 1000),
     "Acrobot-v1": EnvSetting("Acrobot-v1", 5_000),
@@ -93,6 +132,7 @@ ENVIRONMENTS = {
             "obs_type": "ram",
         },
         obs_mapper=uint8tofloat,
+        wrapper=FireResetEnv,
     ),
     "Boxing-v5": EnvSetting(
         "ALE/Boxing-v5",
@@ -249,15 +289,12 @@ class Objective:
         if self.seed_train_envs is not None:
             seeds = [self.seed_train_envs * 7 * i for i in range(1, 1 + envs.num_envs)]
         observations, *_ = envs.reset(seed=seeds)
-
-        if self.setting.name == "ALE/Breakout-v5":
-            ## For breakout in order to play we must press fire
-            observations, *_ = envs.step([1] * envs.num_envs)
-            
         return observations
 
     def eval_sequential(self, x, count: bool = True):
-        envs = gym.make_vec(self.setting.name, num_envs=self.n_episodes, **self.setting.env_kwargs)
+        envs = gym.vector.AsyncVectorEnv(
+            [lambda: self.setting.make() for _ in range(self.n_episodes)]
+        )
         observations = self.reset_envs(envs)
 
         self.net.set_weights(x)
@@ -302,7 +339,9 @@ class Objective:
                 )
                 for _ in range(n)
             ]
-            self.envs = gym.make_vec(self.setting.name, num_envs=self.n_episodes * n, **self.setting.env_kwargs)
+            self.envs = gym.vector.AsyncVectorEnv(
+                [lambda: self.setting.make() for _ in range(self.n_episodes * n)]
+            )
 
         for net, w in zip(self.nets, x.T):
             net.set_weights(w)
@@ -325,14 +364,14 @@ class Objective:
                 actions[idx : idx + self.n_episodes] = net(self.normalizer(obs))
                 self.normalizer.observe(obs)
 
-            observations, rewards, dones, trunc, *_ = self.envs.step(actions)
-         
-
+            observations, rewards, dones, trunc, info = self.envs.step(actions)
+            
             rewards = self.setting.reward_shaping(rewards)
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
 
             first_ep_done = data_over_time[:, 1, :].sum(axis=0) >= 1
             first_ep_all_done = first_ep_done.all()
+
             if not self.eval_total_timesteps and first_ep_all_done:
                 break
 
@@ -374,12 +413,9 @@ class Objective:
         returns = []
         try:
             for episode_index in range(self.n_test_episodes):
-                env = gym.make(self.setting.name, render_mode=render_mode, **self.setting.env_kwargs)
+                env = self.setting.make(render_mode=render_mode)
 
                 observation, *_ = env.reset()
-                if self.setting.name == "ALE/Breakout-v5":
-                    ## For breakout in order to play we must press fire
-                    observations, *_ = env.step(1)
 
                 if render_mode == "human":
                     env.render()
@@ -393,10 +429,6 @@ class Objective:
                     observation, reward, terminated, truncated, *_ = env.step(action)
                     done = terminated or truncated
 
-                    if self.setting.name.startswith("ALE"):
-                        lives = env.unwrapped.lives
-                        if lives == 0:
-                            done = True
 
                     ret += reward
                     if render_mode == "human":
