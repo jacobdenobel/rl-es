@@ -93,7 +93,7 @@ class State:
 
         if self.revaluate_best_every is not None and self.revaluate_best_every < self.time_since_best_update:
             self.time_since_best_update = 0
-            self.best.y, *_ = problem.test(self.best.x)
+            self.best.y = problem.eval_sequential(self.best.x, False)
 
         toc = time.perf_counter()
         dt = toc - self.tic
@@ -242,7 +242,7 @@ class Weights:
         return np.sqrt(self.c_s * (2 - self.c_s) * self.mueff)
     
 
-def init_lambda(n, method="default"):
+def init_lambda(n, method="n/2"):
     """
         range:      2*mu < lambda < 2*n + 10 
         default:    4 + floor(3 * ln(n))     
@@ -252,7 +252,7 @@ def init_lambda(n, method="default"):
         return (4 + np.floor(3 * np.log(n))).astype(int) 
     
     elif method == "n/2":
-        return max(32, np.floor(n / 2).astype(int))
+        return min(128, max(32, np.floor(n / 2).astype(int)))
     else:
         raise ValueError()
     
@@ -348,7 +348,7 @@ class DR1:
         init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         x_prime = init.get_x_prime(problem)
 
-        state = State("DR1", self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
+        state = State("DR1", self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         weights = Weights(self.mu, self.lambda_, self.n)
 
@@ -435,7 +435,7 @@ class DR2:
         init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
         x_prime = init.get_x_prime(problem)
 
-        state = State("DR1", self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
+        state = State("DR1", self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
@@ -510,7 +510,7 @@ class CSA:
         sigma = self.sigma0
         s = np.ones((self.n, 1))
 
-        state = State("CSA", self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
+        state = State("CSA", self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
@@ -586,7 +586,7 @@ class MAES:
         M = np.eye(self.n)
         s = np.ones((self.n, 1))
 
-        state = State("MA-ES", self.data_folder, self.test_gen, self.lambda_, self.revaluate_best_after)
+        state = State("MA-ES", self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
@@ -744,6 +744,7 @@ class EGS:
 
         state = State("EGS", self.data_folder, self.test_gen, self.lambda_)
         sigma = self.sigma0
+
         try:
             while self.budget > problem.n_evals:
                 Z = np.random.normal(size=(self.n, self.lambda_))
@@ -785,6 +786,7 @@ class CMA_EGS:
     mu: int = None             
     kappa: float = 2.0    
     initialization: str = "zero"
+    sep: bool = False
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or int(init_lambda(self.n) / 2)
@@ -837,7 +839,10 @@ class CMA_EGS:
                     D = np.ones((self.n, 1))
                 elif self.n < 100 or state.counter % (self.n // 10) == 0:
                     C = np.triu(C) + np.triu(C, 1).T
-                    D, B = np.linalg.eigh(C)
+                    if not self.sep:
+                        D, B = np.linalg.eigh(C)
+                    else:
+                        D = np.diag(C)
                     D = np.sqrt(D).reshape(-1, 1)
 
                 f = np.r_[f_pos, f_neg]
@@ -918,3 +923,147 @@ class CSA_EGS:
             state.logger.close()
         return state.best, state.mean
 
+
+@dataclass
+class CMAES:
+    n: int
+    budget: int = 25_000
+    data_folder: str = None
+    test_gen: int = 25
+    sigma0: float = 0.02     
+    lambda_: int = 16        
+    mu: int = None             
+    initialization: str = "zero"
+    sep: bool = False
+    # tpa better with ineffective axis
+    tpa: bool = False
+    active: bool = False
+
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or init_lambda(self.n)
+        if self.lambda_ % 2 != 0:
+            self.lambda_ += 1
+        self.mu = self.lambda_ // 2
+        if self.sep:
+            self.tpa = True
+        
+
+    def __call__(self, problem: Objective):
+        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        m = init.get_x_prime(problem)
+
+        w = np.log((self.lambda_ + 1) / 2) - np.log(np.arange(1, self.lambda_ + 1))
+        w = w[: self.mu]
+        mueff = w.sum() ** 2 / (w**2).sum()
+        w = w / w.sum()
+        w_active = np.r_[w, -1 * w[::-1]]
+
+        # Learning rates
+        n = self.n
+        c1 = 2 / ((n + 1.3) ** 2 + mueff)
+        cmu = 2 * (mueff - 2 + 1 / mueff) / ((n + 2) ** 2 + 2 * mueff / 2)
+        cc = (4 + (mueff / n)) / (n + 4 + (2 * mueff / n))
+        cs = (mueff + 2) / (n + mueff + 5)
+        damps = 1.0 + (2.0 * max(0.0, np.sqrt((mueff - 1) / (n + 1)) - 1) + cs)
+        chiN = n**0.5 * (1 - 1 / (4 * n) + 1 / (21 * n**2))
+
+        # dynamic parameters
+        dm = np.zeros((n, 1))
+        pc = np.zeros((n, 1))
+        ps = np.zeros((n, 1))
+        B = np.eye(n)
+        C = np.eye(n)
+        D = np.ones((n, 1))
+        invC = np.eye(n)
+
+        state = State(f"{'sep-' if self.sep else ''}{'a' if self.active else ''}CMA-ES", self.data_folder, self.test_gen, self.lambda_)
+        sigma = self.sigma0
+
+        s = 0
+        hs = True
+        cs = 0.3
+        z_exponent = 0.5
+        damp = n ** 0.5 
+        
+        try:
+            while self.budget > problem.n_evals:
+                active_tpa = self.tpa and state.counter != 0
+                n_offspring = self.lambda_ - (2 * active_tpa)
+                Z = np.random.normal(0, 1, (n, n_offspring))
+                Y = np.dot(B, D * Z)
+                if active_tpa:
+                    Y = np.c_[-dm, dm, Y]
+
+                X = m + (sigma * Y)
+                f = np.array(problem(X))
+
+                # select
+                fidx = np.argsort(f)
+                mu_best = fidx[: self.mu]
+
+                # recombine
+                m_old = m.copy()
+                m = m_old + (1 * ((X[:, mu_best] - m_old) @ w).reshape(-1, 1))
+
+                # adapt
+                dm = (m - m_old) / sigma
+                ps = (1 - cs) * ps + (np.sqrt(cs * (2 - cs) * mueff) * invC @ dm)
+                hs = (
+                    np.linalg.norm(ps)
+                    / np.sqrt(1 - np.power(1 - cs, 2 * (problem.n_evals / self.lambda_)))
+                ) < (1.4 + (2 / (n + 1))) * chiN
+
+                if not self.tpa:
+                    sigma *= np.exp((cs / damps) * ((np.linalg.norm(ps) / chiN) - 1))
+                elif state.counter != 0:
+                    z = (fidx[0] - fidx[1]) / (self.lambda_ - 1)
+                    s = (1 - cs) * s + cs * np.sign(z) * pow(np.abs(z), z_exponent)
+                    sigma *= np.exp(s / damp)
+
+                dhs = (1 - hs) * cc * (2 - cc)
+                pc = (1 - cc) * pc + (hs * np.sqrt(cc * (2 - cc) * mueff)) * dm
+
+
+                rank_one = c1 * pc * pc.T
+                old_C = (1 - (c1 * dhs) - c1 - (cmu * w.sum())) * C
+                if self.active:
+                    rank_mu = cmu * (w_active * Y[:, fidx] @ Y[:, fidx].T)
+                else:
+                    rank_mu = cmu * (w * Y[:, mu_best] @ Y[:, mu_best].T)
+                
+                C = old_C + rank_one + rank_mu
+
+                if np.isinf(C).any() or np.isnan(C).any() or (not 1e-16 < sigma < 1e6):
+                    sigma = self.sigma0
+                    pc = np.zeros((n, 1))
+                    ps = np.zeros((n, 1))
+                    C = np.eye(n)
+                    B = np.eye(n)
+                    D = np.ones((n, 1))
+                    invC = np.eye(n)
+                else:
+                    C = np.triu(C) + np.triu(C, 1).T
+                    if not self.sep:
+                        D, B = np.linalg.eigh(C)
+                    else:
+                        D = np.diag(C)
+
+
+                D = np.sqrt(D).reshape(-1, 1)
+                invC = np.dot(B, D ** -1 * B.T)
+                
+                best_idx = mu_best[0]
+                state.update(
+                    problem,
+                    Solution(f[best_idx],  X[:, best_idx].copy()),
+                    Solution(np.mean(f), m.copy()),
+                    sigma,
+                    f
+                )
+ 
+
+        except KeyboardInterrupt:
+            pass
+        finally:
+            state.logger.close()
+        return state.best, state.mean

@@ -12,6 +12,9 @@ from network import Network, identity, MinMaxNormalizer, argmax, softmax
 from skimage.measure import block_reduce
 
 
+def uint8tofloat(obs):
+    return obs.astype(float) / 255
+
 @dataclass
 class EnvSetting:
     name: str
@@ -23,12 +26,16 @@ class EnvSetting:
     reward_threshold: float = None
     last_activation: callable = identity
     is_discrete: bool = True
+    env_kwargs: dict = None
+    obs_mapper: callable = identity
 
     def __post_init__(self):
-        env = gym.make(self.name)
+        if self.env_kwargs is None:
+            self.env_kwargs = dict()
+        env = gym.make(self.name, **self.env_kwargs)
         self.state_size = np.prod(env.observation_space.shape)
         self.is_discrete = isinstance(env.action_space, gym.spaces.discrete.Discrete)
-        self.max_episode_steps = env.spec.max_episode_steps
+        self.max_episode_steps = self.max_episode_steps or env.spec.max_episode_steps
         self.reward_threshold = env.spec.reward_threshold
         if self.is_discrete:
             self.action_size = env.action_space.n
@@ -36,6 +43,9 @@ class EnvSetting:
         else:
             self.action_size = env.action_space.shape[0]
 
+        if self.max_episode_steps is None:
+            self.max_episode_steps = int(env.spec.kwargs['max_num_frames_per_episode'] / env.spec.kwargs['frameskip'])
+            
 ENVIRONMENTS = {
     "CartPole-v1": EnvSetting("CartPole-v1", 1000),
     "Acrobot-v1": EnvSetting("Acrobot-v1", 5_000),
@@ -55,13 +65,51 @@ ENVIRONMENTS = {
     "Walker2d-v4": EnvSetting(
         "Walker2d-v4", 50_000, lambda x: x - 1, last_activation=np.tanh
     ),
-    "Ant-v4": EnvSetting("Ant-v4", 50_000, lambda x: x - 1, last_activation=np.tanh),
+    "Ant-v4": EnvSetting("Ant-v4", 20_000, lambda x: x - 1, last_activation=np.tanh),
     "Humanoid-v4": EnvSetting(
         "Humanoid-v4",
         500_000,
         lambda x: x - 5,
         last_activation=lambda x: 0.4 * np.tanh(x),
     ),
+    "HumanoidStandup-v4": EnvSetting(
+        "HumanoidStandup-v4",
+        500_000,
+        last_activation=lambda x: 0.4 * np.tanh(x),
+    ),
+    "SpaceInvaders-v5": EnvSetting(
+        "ALE/SpaceInvaders-v5",
+        100_000, 
+        env_kwargs={
+            "obs_type": "ram",
+            # "repeat_action_probability": 0.0,
+        },
+        obs_mapper=uint8tofloat,
+    ),
+    "Breakout-v5": EnvSetting(
+        "ALE/Breakout-v5",
+        100_000, 
+        env_kwargs={
+            "obs_type": "ram",
+        },
+        obs_mapper=uint8tofloat,
+    ),
+    "Boxing-v5": EnvSetting(
+        "ALE/Boxing-v5",
+        100_000, 
+        env_kwargs={
+            "obs_type": "ram",
+        },
+        obs_mapper=uint8tofloat,
+    ),
+    "Pong-v5": EnvSetting(
+        "ALE/Pong-v5",
+        100_000, 
+        env_kwargs={
+            "obs_type": "ram",
+        },
+        obs_mapper=uint8tofloat,
+    )
 }
 
 CLASSIC_CONTROL = [
@@ -84,6 +132,12 @@ MUJOCO = [
     "Walker2d-v4",
     "Ant-v4",
     "Humanoid-v4",   
+]
+
+ATARI = [
+    "SpaceInvaders-v5",
+    "Pong-v5",
+    "Breakout-v5"
 ]
 
 
@@ -175,8 +229,8 @@ class Objective:
             os.path.join(self.data_folder, "train_evals.csv"), "a+"
         )
         self.test_writer = open(os.path.join(self.data_folder, "test_evals.csv"), "a+")
-        header = ", ".join([f"w{i}" for i in range(self.n)])
-        header = f"evals, fitness, {header}\n"
+        # header = ", ".join([f"w{i}" for i in range(self.n)])
+        header = f"evals, fitness\n"#, {header}\n"
         self.train_writer.write(header)
         self.test_writer.write(header)
 
@@ -187,7 +241,7 @@ class Objective:
             f = np.array([self.eval_sequential(xi) for xi in x.T])
         for y, xi in zip(f, x.T):
             self.n_evals += 1
-            self.train_writer.write(f"{self.n_evals}, {y}, {', '.join(map(str, xi))}\n")
+            self.train_writer.write(f"{self.n_evals}, {y}\n")
         return f
 
     def reset_envs(self, envs):
@@ -195,32 +249,39 @@ class Objective:
         if self.seed_train_envs is not None:
             seeds = [self.seed_train_envs * 7 * i for i in range(1, 1 + envs.num_envs)]
         observations, *_ = envs.reset(seed=seeds)
+
+        if self.setting.name == "ALE/Breakout-v5":
+            ## For breakout in order to play we must press fire
+            observations, *_ = envs.step([1] * envs.num_envs)
+            
         return observations
 
-    def eval_sequential(self, x):
-        envs = gym.make_vec(self.setting.name, num_envs=self.n_episodes)
+    def eval_sequential(self, x, count: bool = True):
+        envs = gym.make_vec(self.setting.name, num_envs=self.n_episodes, **self.setting.env_kwargs)
         observations = self.reset_envs(envs)
 
         self.net.set_weights(x)
 
-        data_over_time = np.empty((self.n_timesteps, 2, self.n_episodes))
+        data_over_time = np.zeros((self.n_timesteps, 2, self.n_episodes))
 
         for t in range(self.n_timesteps):
+            observations = self.setting.obs_mapper(observations)
             actions = self.net(self.normalizer(observations))
             self.normalizer.observe(observations)
             observations, rewards, dones, trunc, *_ = envs.step(actions)
             rewards = self.setting.reward_shaping(rewards)
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
-
             if not self.eval_total_timesteps and np.logical_or(dones, trunc):
                 break
-
+        
         returns = []
         for i in range(self.n_episodes):
             ret, n_eps, n_timesteps = self.calculate_returns(data_over_time[:, :, i])
-            self.n_train_timesteps += n_timesteps
-            self.n_train_episodes += n_eps
+            if count:
+                self.n_train_timesteps += n_timesteps
+                self.n_train_episodes += n_eps
             returns.extend(ret)
+
 
         y = -self.aggregator(returns)
         if self.regularized:
@@ -229,7 +290,7 @@ class Objective:
 
     def eval_parallel(self, x):
         n = x.shape[1]
-        if n > len(self.nets):
+        if n != len(self.nets):
             self.nets = [
                 Network(
                     self.setting.state_size,
@@ -241,7 +302,7 @@ class Objective:
                 )
                 for _ in range(n)
             ]
-            self.envs = gym.make_vec(self.setting.name, num_envs=self.n_episodes * n)
+            self.envs = gym.make_vec(self.setting.name, num_envs=self.n_episodes * n, **self.setting.env_kwargs)
 
         for net, w in zip(self.nets, x.T):
             net.set_weights(w)
@@ -257,6 +318,7 @@ class Objective:
 
         data_over_time = np.zeros((self.n_timesteps, 2, n_total_episodes))
         for t in range(self.n_timesteps):
+            observations = self.setting.obs_mapper(observations)
             for i, net in enumerate(self.nets):
                 idx = i * self.n_episodes
                 obs = observations[idx : idx + self.n_episodes, :]
@@ -264,10 +326,13 @@ class Objective:
                 self.normalizer.observe(obs)
 
             observations, rewards, dones, trunc, *_ = self.envs.step(actions)
+         
+
             rewards = self.setting.reward_shaping(rewards)
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
 
-            first_ep_all_done = (data_over_time[:, 1, :].sum(axis=0) >= 1).all()
+            first_ep_done = data_over_time[:, 1, :].sum(axis=0) >= 1
+            first_ep_all_done = first_ep_done.all()
             if not self.eval_total_timesteps and first_ep_all_done:
                 break
 
@@ -309,19 +374,30 @@ class Objective:
         returns = []
         try:
             for episode_index in range(self.n_test_episodes):
-                env = gym.make(self.setting.name, render_mode=render_mode)
+                env = gym.make(self.setting.name, render_mode=render_mode, **self.setting.env_kwargs)
 
                 observation, *_ = env.reset()
+                if self.setting.name == "ALE/Breakout-v5":
+                    ## For breakout in order to play we must press fire
+                    observations, *_ = env.step(1)
+
                 if render_mode == "human":
                     env.render()
                 done = False
                 ret = 0
                 step_index = 0
                 while not done:
+                    observation = self.setting.obs_mapper(observation)
                     obs = self.normalizer(observation.reshape(1, -1))
                     action, *_ = self.net(obs)
                     observation, reward, terminated, truncated, *_ = env.step(action)
                     done = terminated or truncated
+
+                    if self.setting.name.startswith("ALE"):
+                        lives = env.unwrapped.lives
+                        if lives == 0:
+                            done = True
+
                     ret += reward
                     if render_mode == "human":
                         print(
@@ -338,7 +414,7 @@ class Objective:
                             save_video(
                                 env.render(),
                                 f"{self.data_folder}/videos",
-                                fps=env.metadata["render_fps"],
+                                fps=env.metadata.get("render_fps") or 30,
                                 step_starting_index=0,
                                 episode_index=0,
                                 name_prefix=name,
@@ -358,7 +434,7 @@ class Objective:
                 returns.append(ret)
                 self.n_test_evals += 1
                 self.test_writer.write(
-                    f"{self.n_test_evals}, {ret}, {', '.join(map(str, x.ravel()))}\n"
+                    f"{self.n_test_evals}, {ret}\n"
                 )
 
         except KeyboardInterrupt:
@@ -376,3 +452,4 @@ class Objective:
 
     def play(self, x, name, plot=True):
         return self.test(x, "human", plot, name)
+
