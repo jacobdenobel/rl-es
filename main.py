@@ -17,11 +17,13 @@ from algorithms import (
     ARS_OPTIMAL_PARAMETERS,
     CSA_EGS,
     CMAES,
+    SPSA,
 )
 from objective import Objective, ENVIRONMENTS
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
 STRATEGIES = (
+    "spsa",
     "ars",
     "ars-v2",
     "maes",
@@ -88,7 +90,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--alpha",
-        type=float,
+        type=float, 
         default=0.02,
     )
     parser.add_argument(
@@ -173,6 +175,9 @@ if __name__ == "__main__":
         if args.scale_by_std:
             strategy_name = f"{strategy_name}-std"
 
+        if args.lamb is not None:
+            strategy_name = f"{strategy_name}-lambda-{args.lamb}"
+
     data_folder = f"{DATA}/{args.env_name}/{strategy_name}/{t}"
     if args.play is None:
         os.makedirs(data_folder, exist_ok=True)
@@ -214,6 +219,14 @@ if __name__ == "__main__":
                 test_gen=args.test_every_nth_iteration,
                 mirrored=args.mirrored,
                 scale_by_std=args.scale_by_std,
+            )
+        elif args.strategy == "spsa":
+            optimizer = SPSA(
+                obj.n,
+                args.budget,
+                data_folder=data_folder,
+                initialization=args.initialization,
+                test_gen=args.test_every_nth_iteration,
             )
         elif args.strategy == "dr1":
             optimizer = DR1(
@@ -348,7 +361,7 @@ if __name__ == "__main__":
         obj.store_video = True
         obj.n_test_episodes = 1
         obj.data_folder = os.path.dirname(data_folder)
-        obj.test(weights, render_mode="rgb_array_list", name="test")
+        obj.play_check(weights, render_mode="rgb_array_list", name="test")
 
     # best_test = obj.play(best, data_folder, "best", plot)
     # print("Test with best x (median max):", best_test)

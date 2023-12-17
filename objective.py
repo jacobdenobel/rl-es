@@ -13,8 +13,42 @@ from skimage.measure import block_reduce
 
 
 def uint8tofloat(obs):
-    return obs.astype(float) / 255
+    return ((obs.astype(float) / 255) * 2) - 1
 
+
+
+class GaussianProjection:
+    def __init__(self, n_components, n_features, mapper=identity, orthogonal=True):
+        # self.projection = np.random.normal(
+        #     loc=0.0, scale=1.0 / np.sqrt(n_components), size=(n_components, n_features)
+        # )
+        # if orthogonal:
+        #     u, s, vh = np.linalg.svd(self.projection, full_matrices=False)
+        #     self.projection = u @ vh
+
+        self.projection = np.sqrt(3) * np.random.choice(
+            [-1, 0, 1], p=[1 / 6, 2 / 3, 1 / 6], size=(n_components, n_features)
+        )
+        self.mapper = mapper
+
+    def __call__(self, obs):
+        obs = self.mapper(obs)
+        return obs @ self.projection.T
+
+
+class FeatureSelector:
+    """Simple class that selects a subset of features"""
+
+    def __init__(self, idx, mapper=identity):
+        self.idx = np.asarray(idx).astype(int)
+        self.n = len(idx)
+        self.mapper = mapper
+
+    def __call__(self, obs):
+        obs = np.atleast_2d(obs)
+        obs = self.mapper(obs)
+        obs = obs[:, self.idx]
+        return obs
 
 
 class FireResetEnv(gym.Wrapper):
@@ -23,28 +57,70 @@ class FireResetEnv(gym.Wrapper):
 
     """
 
-    def __init__(self, env: gym.Env):
+    def __init__(
+        self,
+        env: gym.Env,
+        terminate_on_life_loss: bool = False,
+        random_fire_action_prob: float = 0.01,
+    ):
         gym.Wrapper.__init__(self, env)
         assert env.unwrapped.get_action_meanings()[1] == "FIRE"
         assert len(env.unwrapped.get_action_meanings()) >= 3
         self.info = dict()
+        self.terminate_on_life_loss = terminate_on_life_loss
+        self.random_fire_action_prob = random_fire_action_prob
 
     def reset(self, **kwargs) -> np.ndarray:
         self.env.reset(**kwargs)
         obs, _, done, trunc, self.info = self.env.step(1)
-        # if done:
-        #     self.env.reset(**kwargs)
-        # obs, _, done, trunc, info = self.env.step(1)
-        # if done:
-        #     self.env.reset(**kwargs)
         return obs, self.info
 
     def step(self, *args, **kwargs):
         obs, rew, done, trunc, info = self.env.step(*args, **kwargs)
-        if info.get("lives") is not None and info.get("lives") != self.info.get("lives"):
-            obs, rew, done, trunc, info = self.env.step(1)
+        if info.get("lives") is not None and info.get("lives") != self.info.get(
+            "lives"
+        ):
+            if self.terminate_on_life_loss:
+                done = True
+
+        # Randomly add game start actions in order to ensure that the game start
+        if np.random.uniform(0, 1) < self.random_fire_action_prob:
+            obs, r, done, trunc, info = self.env.step(1)
+            rew += r
+
         self.info = info
         return obs, rew, done, trunc, info
+
+
+class FrameStacker(gym.Wrapper):
+    def __init__(self, env: gym.Env, n_frames: int = 2):
+        gym.Wrapper.__init__(self, env)
+        self.n_frames = n_frames
+        self.observation_space = gym.spaces.Box(
+            low=self.env.observation_space.low[0],
+            high=self.env.observation_space.high[0],
+            shape=(self.env.observation_space.shape[0] * n_frames,),
+            dtype=self.env.observation_space.dtype,
+        )
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        for _ in range(self.n_frames - 1):
+            obs_t, *_ = self.env.step(0)
+            obs = np.r_[obs, obs_t]
+        return obs, info
+
+    def step(self, *args, **kwargs):
+        obs, rew, done, trunc, info = self.env.step(*args, **kwargs)
+        for _ in range(self.n_frames - 1):
+            obs_t, rew_t, done_t, trunc_t, info = self.env.step(0)
+            obs = np.r_[obs, obs_t]
+            rew += rew_t
+            done = done or done_t
+            trunc = trunc or trunc_t
+
+        return obs, rew, done, trunc, info
+
 
 @dataclass
 class EnvSetting:
@@ -64,8 +140,9 @@ class EnvSetting:
     def __post_init__(self):
         if self.env_kwargs is None:
             self.env_kwargs = dict()
+
         env = gym.make(self.name, **self.env_kwargs)
-        self.state_size = np.prod(env.observation_space.shape)
+        self.state_size = self.state_size or np.prod(env.observation_space.shape)
         self.is_discrete = isinstance(env.action_space, gym.spaces.discrete.Discrete)
         self.max_episode_steps = self.max_episode_steps or env.spec.max_episode_steps
         self.reward_threshold = env.spec.reward_threshold
@@ -76,27 +153,34 @@ class EnvSetting:
             self.action_size = env.action_space.shape[0]
 
         if self.max_episode_steps is None:
-            self.max_episode_steps = int(env.spec.kwargs['max_num_frames_per_episode'] / env.spec.kwargs['frameskip'])
+            self.max_episode_steps = int(
+                env.spec.kwargs["max_num_frames_per_episode"]
+                / env.spec.kwargs["frameskip"]
+            )
 
     def make(self, **kwargs):
         env = gym.make(self.name, **{**self.env_kwargs, **kwargs})
         if self.wrapper is not None:
-            env = FireResetEnv(env)
+            env = self.wrapper(env)
         return env
-    
+
 
 ENVIRONMENTS = {
     "CartPole-v1": EnvSetting("CartPole-v1", 1000),
     "Acrobot-v1": EnvSetting("Acrobot-v1", 5_000),
-    "Pendulum-v1": EnvSetting("Pendulum-v1", 5_000,  last_activation=lambda x: 2 * np.tanh(x)),
+    "Pendulum-v1": EnvSetting(
+        "Pendulum-v1", 5_000, last_activation=lambda x: 2 * np.tanh(x)
+    ),
     "MountainCar-v0": EnvSetting("MountainCar-v0", 5_000),
     "LunarLander-v2": EnvSetting("LunarLander-v2", 10_000),
     "BipedalWalker-v3": EnvSetting(
         "BipedalWalker-v3", 20_000, lambda x: np.clip(x, -1, 1)
     ),
-    # "Swimmer-v4": EnvSetting("Swimmer-v4", 10_000),
+    "Swimmer-v4": EnvSetting("Swimmer-v4", 2_000, last_activation=np.tanh),
     "Reacher-v4": EnvSetting("Reacher-v4", 20_000, last_activation=np.tanh),
-    "InvertedPendulum-v4": EnvSetting("InvertedPendulum-v4", 5_000, last_activation=lambda x: 3 * np.tanh(x)),
+    "InvertedPendulum-v4": EnvSetting(
+        "InvertedPendulum-v4", 5_000, last_activation=lambda x: 3 * np.tanh(x)
+    ),
     "Hopper-v4": EnvSetting(
         "Hopper-v4", 20_000, lambda x: x - 1, last_activation=np.tanh
     ),
@@ -104,10 +188,17 @@ ENVIRONMENTS = {
     "Walker2d-v4": EnvSetting(
         "Walker2d-v4", 50_000, lambda x: x - 1, last_activation=np.tanh
     ),
-    "Ant-v4": EnvSetting("Ant-v4", 20_000, lambda x: x - 1, last_activation=np.tanh),
+    "Ant-v4": EnvSetting(
+        "Ant-v4",
+        50_000,
+        lambda x: x - 1,
+        last_activation=np.tanh,
+        # obs_mapper=GaussianProjection(8, 27),
+        # state_size=8
+    ),
     "Humanoid-v4": EnvSetting(
         "Humanoid-v4",
-        500_000,
+        100_000,
         lambda x: x - 5,
         last_activation=lambda x: 0.4 * np.tanh(x),
     ),
@@ -118,25 +209,72 @@ ENVIRONMENTS = {
     ),
     "SpaceInvaders-v5": EnvSetting(
         "ALE/SpaceInvaders-v5",
-        100_000, 
+        100_000,
         env_kwargs={
             "obs_type": "ram",
-            # "repeat_action_probability": 0.0,
+            "frameskip": 4,
+            "repeat_action_probability": 0.0,
         },
-        obs_mapper=uint8tofloat,
+        obs_mapper=uint8tofloat,  # GaussianProjection(16, 128, uint8tofloat),
+        state_size=128,
+        # wrapper=lambda env: FrameStacker(env, 3)
     ),
     "Breakout-v5": EnvSetting(
         "ALE/Breakout-v5",
-        100_000, 
+        100_000,
         env_kwargs={
             "obs_type": "ram",
+            "repeat_action_probability": 0.0,
+            "frameskip": 4,
         },
-        obs_mapper=uint8tofloat,
+        obs_mapper=FeatureSelector(
+            [
+                0,
+                6,
+                12,
+                13,
+                18,
+                19,
+                24,
+                25,
+                30,
+                31,
+                57,
+                70,
+                71,
+                72,
+                74,
+                75,
+                77,
+                84,
+                86,
+                90,
+                91,
+                94,
+                95,
+                96,
+                99,
+                100,
+                101,
+                102,
+                103,
+                104,
+                105,
+                106,
+                107,
+                109,
+                119,
+                121,
+                122,
+            ],
+            uint8tofloat,
+        ),
+        state_size=37,
         wrapper=FireResetEnv,
     ),
     "Boxing-v5": EnvSetting(
         "ALE/Boxing-v5",
-        100_000, 
+        100_000,
         env_kwargs={
             "obs_type": "ram",
         },
@@ -144,12 +282,48 @@ ENVIRONMENTS = {
     ),
     "Pong-v5": EnvSetting(
         "ALE/Pong-v5",
-        100_000, 
+        100_000,
         env_kwargs={
             "obs_type": "ram",
+            "repeat_action_probability": 0.0,
+            "frameskip": 4,
         },
-        obs_mapper=uint8tofloat,
-    )
+        obs_mapper=FeatureSelector(
+            [
+                2,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                17,
+                18,
+                19,
+                20,
+                21,
+                49,
+                50,
+                51,
+                54,
+                56,
+                58,
+                60,
+                64,
+                67,
+                69,
+                71,
+                73,
+                121,
+                122,
+            ],
+            uint8tofloat,
+        ),
+        state_size=29,
+    ),
 }
 
 CLASSIC_CONTROL = [
@@ -159,10 +333,7 @@ CLASSIC_CONTROL = [
     "MountainCar-v0",
 ]
 
-BOX2D = [
-    "LunarLander-v2",
-    "BipedalWalker-v3"
-]
+BOX2D = ["LunarLander-v2", "BipedalWalker-v3"]
 
 MUJOCO = [
     "Reacher-v4",
@@ -171,14 +342,10 @@ MUJOCO = [
     "HalfCheetah-v4",
     "Walker2d-v4",
     "Ant-v4",
-    "Humanoid-v4",   
+    "Humanoid-v4",
 ]
 
-ATARI = [
-    "SpaceInvaders-v5",
-    "Pong-v5",
-    "Breakout-v5"
-]
+ATARI = ["SpaceInvaders-v5", "Pong-v5", "Breakout-v5"]
 
 
 def rgb_to_gray_flat(observations):
@@ -270,7 +437,7 @@ class Objective:
         )
         self.test_writer = open(os.path.join(self.data_folder, "test_evals.csv"), "a+")
         # header = ", ".join([f"w{i}" for i in range(self.n)])
-        header = f"evals, fitness\n"#, {header}\n"
+        header = f"evals, fitness\n"  # , {header}\n"
         self.train_writer.write(header)
         self.test_writer.write(header)
 
@@ -310,7 +477,7 @@ class Objective:
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
             if not self.eval_total_timesteps and np.logical_or(dones, trunc):
                 break
-        
+
         returns = []
         for i in range(self.n_episodes):
             ret, n_eps, n_timesteps = self.calculate_returns(data_over_time[:, :, i])
@@ -319,13 +486,12 @@ class Objective:
                 self.n_train_episodes += n_eps
             returns.extend(ret)
 
-
         y = -self.aggregator(returns)
         if self.regularized:
             y = regularize(x, y)
         return y
 
-    def eval_parallel(self, x):
+    def eval_parallel(self, x, count: bool = True):
         n = x.shape[1]
         if n != len(self.nets):
             self.nets = [
@@ -365,7 +531,7 @@ class Objective:
                 self.normalizer.observe(obs)
 
             observations, rewards, dones, trunc, info = self.envs.step(actions)
-            
+
             rewards = self.setting.reward_shaping(rewards)
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
 
@@ -382,8 +548,9 @@ class Objective:
                 ret, n_eps, n_timesteps = self.calculate_returns(
                     data_over_time[:, :, j + i]
                 )
-                self.n_train_timesteps += n_timesteps
-                self.n_train_episodes += n_eps
+                if count:
+                    self.n_train_timesteps += n_timesteps
+                    self.n_train_episodes += n_eps
                 returns.extend(ret)
             aggregated_returns[k] = self.aggregator(returns)
 
@@ -407,13 +574,54 @@ class Objective:
         # TODO: we can remove incomplete episodes from the last optionally
         return returns_, len(returns_), n_timesteps
 
-    def test(self, x, render_mode=None, plot=False, name=None):
-        self.net.set_weights(x)
+    def test_policy(self, x, name: str = None, save: bool = True):
+        x = x.reshape(-1, 1)
+        X = np.tile(x, (1, self.n_test_episodes))
+        returns = self.eval_parallel(X, False)
+        if save:
+            os.makedirs(f"{self.data_folder}/policies", exist_ok=True)
+            loc = f"{self.data_folder}/policies/{name}"
+            
+            np.save(loc, x)
+            np.save(f"{loc}-norm-std", self.normalizer.std)
+            np.save(f"{loc}-norm-mean", self.normalizer.mean)
+            
+            for ret in returns:
+                self.n_test_evals += 1
+                self.test_writer.write(f"{self.n_test_evals}, {ret}\n")
+            
+            self.play_check(loc, 'rgb_array_list', name)
 
+        return -np.mean(returns), -np.median(returns), np.std(returns)
+    
+    def load_network(self, loc: str):
+        net = Network(
+            self.setting.state_size,
+            self.setting.action_size,
+            self.n_hidden,
+            self.n_layers,
+            self.setting.last_activation,
+            self.bias,
+        )
+        net.set_weights(np.load(f"{loc}.npy"))
+        if self.normalized:
+            normalizer = Standardizer(self.setting.state_size)
+        else:
+            normalizer = Normalizer(self.setting.state_size)
+        normalizer.std = np.load(f"{loc}-norm-std.npy")
+        normalizer.mean = np.load(f"{loc}-norm-mean.npy")
+        return net, normalizer
+
+    def play_check(self, location, render_mode=None, name=None, n_reps: int = 1):
+        if not self.store_video and render_mode == "rgb_array_list":
+            return 
+
+        net, normalizer = self.load_network(location)
         returns = []
         try:
-            for episode_index in range(self.n_test_episodes):
+            for episode_index in range(n_reps):
                 env = self.setting.make(render_mode=render_mode)
+                env.metadata['render_fps'] = max(env.metadata.get('render_fps') or 60, 60)
 
                 observation, *_ = env.reset()
 
@@ -422,13 +630,13 @@ class Objective:
                 done = False
                 ret = 0
                 step_index = 0
+                print("playing test episode")
                 while not done:
                     observation = self.setting.obs_mapper(observation)
-                    obs = self.normalizer(observation.reshape(1, -1))
-                    action, *_ = self.net(obs)
+                    obs = normalizer(observation.reshape(1, -1))
+                    action, *_ = net(obs)
                     observation, reward, terminated, truncated, *_ = env.step(action)
                     done = terminated or truncated
-
 
                     ret += reward
                     if render_mode == "human":
@@ -436,7 +644,7 @@ class Objective:
                             f"step {step_index}, return {ret: .3f} {' ' * 25}", end="\r"
                         )
                     step_index += 1
-
+                print("done")
                 if render_mode == "human":
                     print()
                 if render_mode == "rgb_array_list" and episode_index == 0:
@@ -446,42 +654,15 @@ class Objective:
                             save_video(
                                 env.render(),
                                 f"{self.data_folder}/videos",
-                                fps=env.metadata.get("render_fps") or 30,
+                                fps=env.metadata.get("render_fps"),
                                 step_starting_index=0,
                                 episode_index=0,
                                 name_prefix=name,
                             )
                     render_mode = None
-                    os.makedirs(f"{self.data_folder}/policies", exist_ok=True)
-                    np.save(f"{self.data_folder}/policies/{name}", x)
-                    np.save(
-                        f"{self.data_folder}/policies/{name}-norm-std",
-                        self.normalizer.std,
-                    )
-                    np.save(
-                        f"{self.data_folder}/policies/{name}-norm-mean",
-                        self.normalizer.mean,
-                    )
-                    render_mode = None
-                returns.append(ret)
-                self.n_test_evals += 1
-                self.test_writer.write(
-                    f"{self.n_test_evals}, {ret}\n"
-                )
 
         except KeyboardInterrupt:
             pass
         finally:
             env.close()
-        if plot:
-            plt.figure()
-            plt.hist(returns)
-            plt.grid()
-            plt.xlabel("returns")
-            plt.ylabel("freq")
-            plt.savefig(f"{self.data_folder}/returns_{name}.png")
-        return np.mean(returns), np.median(returns), np.std(returns)
-
-    def play(self, x, name, plot=True):
-        return self.test(x, "human", plot, name)
-
+        return returns

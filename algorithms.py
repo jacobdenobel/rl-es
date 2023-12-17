@@ -111,18 +111,16 @@ class State:
         )
 
         if self.counter % self.test_gen == 0:
-            self.best_test, self.best_median, self.best_std = problem.test(
+            self.best_test, self.best_median, self.best_std = problem.test_policy(
                 self.best.x,
-                "rgb_array_list",
-                False,
                 name=f"t-{self.counter}-best",
+                save=True
             )
             print("Test with best x (max):", self.best_test)
-            self.mean_test, self.mean_median, self.mean_std = problem.test(
+            self.mean_test, self.mean_median, self.mean_std = problem.test_policy(
                 self.mean.x,
-                "rgb_array_list",
-                False,
                 name=f"t-{self.counter}-mean",
+                save=True
             )
             print("Test with mean x (max):", self.mean_test)
 
@@ -253,6 +251,8 @@ def init_lambda(n, method="n/2"):
     
     elif method == "n/2":
         return min(128, max(32, np.floor(n / 2).astype(int)))
+    elif isinstance(method, int):
+        return method
     else:
         raise ValueError()
     
@@ -266,9 +266,10 @@ class Initializer:
     method: str = "lhs"
     fallback: str = "zero"
     n_evals: int = 0
-    max_evals: int = 500
+    max_evals: int = 32 *5
     max_observed: float = -np.inf
     min_observed: float =  np.inf
+    aggregate: bool = False
 
     def __post_init__(self):
         self.sampler = qmc.LatinHypercube(self.n)
@@ -282,7 +283,7 @@ class Initializer:
             return np.random.normal(size=(self.n, 1))
         raise ValueError()
 
-    def get_x_prime(self, problem, samples_per_trial: int = 10) -> np.ndarray:
+    def get_x_prime(self, problem, samples_per_trial: int = 128) -> np.ndarray:
         if self.method != "lhs":
             return self.static_init(self.method)
 
@@ -294,7 +295,7 @@ class Initializer:
             f = problem(X)
             self.n_evals += samples_per_trial
             self.max_observed = max(self.max_observed, f.max())
-            self.min_observed = max(self.min_observed, f.max())
+            self.min_observed = min(self.min_observed, f.min())
             
             if f.std() > 0:
                 idx = f != self.max_observed
@@ -309,10 +310,15 @@ class Initializer:
                           f", using fallback {self.fallback} intialization.")
             return self.static_init(self.fallback)
 
-        w = np.log(len(sample_values) + 0.5) - np.log(np.arange(1, len(sample_values) + 1))
-        w = w / w.sum()
         idx = np.argsort(sample_values)
-        x_prime = np.sum(w * samples[:, idx], axis=1, keepdims=True)
+        if self.aggregate:
+            w = np.log(len(sample_values) + 0.5) - np.log(np.arange(1, len(sample_values) + 1))
+            w = w / w.sum()
+            x_prime = np.sum(w * samples[:, idx], axis=1, keepdims=True)
+        else:
+            x_prime = samples[:, idx[0]].reshape(-1, 1)
+
+        print("lhs:", problem.n_evals, self.min_observed, self.max_observed)
         return x_prime
 
 
@@ -345,7 +351,7 @@ class DR1:
         sigma = np.ones((self.n, 1)) * self.sigma0
         root_pi = np.sqrt(2 / np.pi)
 
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         x_prime = init.get_x_prime(problem)
 
         state = State("DR1", self.data_folder, self.test_gen, self.lambda_)
@@ -432,10 +438,10 @@ class DR2:
         c3 = 1 / (5 * self.n)
 
         weights = Weights(self.mu, self.lambda_, self.n)
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         x_prime = init.get_x_prime(problem)
 
-        state = State("DR1", self.data_folder, self.test_gen, self.lambda_)
+        state = State("DR2", self.data_folder, self.test_gen, self.lambda_)
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
@@ -504,7 +510,7 @@ class CSA:
 
         echi = np.sqrt(self.n) * (1 - (1 / self.n / 4) - (1 / self.n / self.n / 21))
 
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         x_prime = init.get_x_prime(problem)
 
         sigma = self.sigma0
@@ -580,7 +586,7 @@ class MAES:
         d_s = 1 + c_s + 2 * max(0, np.sqrt((weights.mueff - 1) / (self.n + 1)) - 1)
         sqrt_s = np.sqrt(c_s * (2 - c_s) * weights.mueff)
 
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         x_prime = init.get_x_prime(problem)
         sigma = self.sigma0
         M = np.eye(self.n)
@@ -678,7 +684,7 @@ class ARS:
         self.sigma0 = self.sigma0 or 0.03
 
     def __call__(self, problem: Objective):
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         m = init.get_x_prime(problem)
 
         state = State("ARS", self.data_folder, self.test_gen, self.lambda_ * 2)
@@ -739,7 +745,7 @@ class EGS:
         self.mu = 1
 
     def __call__(self, problem: Objective):
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         m = init.get_x_prime(problem)
 
         state = State("EGS", self.data_folder, self.test_gen, self.lambda_)
@@ -793,7 +799,7 @@ class CMA_EGS:
         self.mu = 1
 
     def __call__(self, problem: Objective):
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         m = init.get_x_prime(problem)
 
         pc = np.zeros((self.n, 1))
@@ -880,7 +886,7 @@ class CSA_EGS:
         self.mu = 1
 
     def __call__(self, problem: Objective):
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         m = init.get_x_prime(problem)
 
         ps = np.zeros((self.n, 1))
@@ -941,15 +947,19 @@ class CMAES:
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or init_lambda(self.n)
-        if self.lambda_ % 2 != 0:
-            self.lambda_ += 1
-        self.mu = self.lambda_ // 2
         if self.sep:
             self.tpa = True
+            self.lambda_ = max(4, self.lambda_)
+
+        if self.lambda_ % 2 != 0:
+            self.lambda_ += 1
+        self.mu = self.lambda_ // 2            
+        
+        print(self.n, self.lambda_, self.mu, self.sigma0)
         
 
     def __call__(self, problem: Objective):
-        init = Initializer(self.n, method=self.initialization, max_evals=self.budget // 20)
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
         m = init.get_x_prime(problem)
 
         w = np.log((self.lambda_ + 1) / 2) - np.log(np.arange(1, self.lambda_ + 1))
@@ -958,7 +968,7 @@ class CMAES:
         w = w / w.sum()
         w_active = np.r_[w, -1 * w[::-1]]
 
-        # Learning rates
+        # Learning ratesq
         n = self.n
         c1 = 2 / ((n + 1.3) ** 2 + mueff)
         cmu = 2 * (mueff - 2 + 1 / mueff) / ((n + 2) ** 2 + 2 * mueff / 2)
@@ -1060,8 +1070,49 @@ class CMAES:
                     sigma,
                     f
                 )
- 
+        except KeyboardInterrupt:
+            pass
+        finally:
+            state.logger.close()
+        return state.best, state.mean
 
+
+
+
+@dataclass
+class SPSA:
+    n: int
+    budget: int = 25_000
+    data_folder: str = None
+    test_gen: int = 25
+    mu: int = 1
+    lambda_: int = 1
+    sigma0: float = 0.02     
+    initialization: str = "zero"
+
+    def __call__(self, problem: Objective):
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
+        m = init.get_x_prime(problem)
+
+        state = State("SPSA", self.data_folder, self.test_gen, 1)
+        import spsa
+        
+        iterator = spsa.iterator.minimize(problem, m)
+        try:
+            while self.budget > problem.n_evals:
+                data = next(iterator)
+                x_best = data['x_best']
+                y_best, *_ = data['y_best']
+                x = data['x']
+                y, *_ = data['y']
+
+                state.update(
+                    problem,
+                    Solution(y_best,  x_best.copy()),
+                    Solution(y,  x.copy()),
+                    self.sigma0,
+                    np.array([y])
+                )
         except KeyboardInterrupt:
             pass
         finally:
