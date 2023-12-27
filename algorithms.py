@@ -93,7 +93,15 @@ class State:
 
         if self.revaluate_best_every is not None and self.revaluate_best_every < self.time_since_best_update:
             self.time_since_best_update = 0
+            best_old = self.best.y
             self.best.y = problem.eval_sequential(self.best.x, False)
+            # got_test, got_mean, got_std = problem.test_policy(
+            #     self.best.x,
+            #     name=f"t-{self.counter}-best",
+            #     save=False
+            # )
+            # print("reevaluating best, expected: ", -best_old, -self.best.y, -got_test, -got_mean, got_std)
+            
 
         toc = time.perf_counter()
         dt = toc - self.tic
@@ -116,14 +124,15 @@ class State:
                 name=f"t-{self.counter}-best",
                 save=True
             )
+            self.best_test, self.best_median = -self.best_test, -self.best_median
             print("Test with best x (max):", self.best_test)
             self.mean_test, self.mean_median, self.mean_std = problem.test_policy(
                 self.mean.x,
                 name=f"t-{self.counter}-mean",
                 save=True
             )
+            self.mean_test, self.mean_median = -self.mean_test, -self.mean_median
             print("Test with mean x (max):", self.mean_test)
-
 
         self.logger.write(
             (
@@ -948,8 +957,8 @@ class CMAES:
     def __post_init__(self):
         self.lambda_ = self.lambda_ or init_lambda(self.n)
         if self.sep:
-            self.tpa = True
-            self.lambda_ = max(4, self.lambda_)
+            # self.tpa = True
+            self.lambda_ = min(4, self.lambda_)
 
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
@@ -968,11 +977,15 @@ class CMAES:
         w = w / w.sum()
         w_active = np.r_[w, -1 * w[::-1]]
 
-        # Learning ratesq
+        # Learning rates
         n = self.n
         c1 = 2 / ((n + 1.3) ** 2 + mueff)
+            
         cmu = 2 * (mueff - 2 + 1 / mueff) / ((n + 2) ** 2 + 2 * mueff / 2)
+        if self.sep:
+            cmu *= ((n + 2) / 3)
         cc = (4 + (mueff / n)) / (n + 4 + (2 * mueff / n))
+
         cs = (mueff + 2) / (n + mueff + 5)
         damps = 1.0 + (2.0 * max(0.0, np.sqrt((mueff - 1) / (n + 1)) - 1) + cs)
         chiN = n**0.5 * (1 - 1 / (4 * n) + 1 / (21 * n**2))
@@ -989,9 +1002,10 @@ class CMAES:
         state = State(f"{'sep-' if self.sep else ''}{'a' if self.active else ''}CMA-ES", self.data_folder, self.test_gen, self.lambda_)
         sigma = self.sigma0
 
+        if self.tpa:
+            cs = 0.3
         s = 0
         hs = True
-        cs = 0.3
         z_exponent = 0.5
         damp = n ** 0.5 
         
@@ -1034,8 +1048,8 @@ class CMAES:
                 pc = (1 - cc) * pc + (hs * np.sqrt(cc * (2 - cc) * mueff)) * dm
 
 
-                rank_one = c1 * pc * pc.T
                 old_C = (1 - (c1 * dhs) - c1 - (cmu * w.sum())) * C
+                rank_one = c1 * pc * pc.T
                 if self.active:
                     rank_mu = cmu * (w_active * Y[:, fidx] @ Y[:, fidx].T)
                 else:
@@ -1056,7 +1070,8 @@ class CMAES:
                     if not self.sep:
                         D, B = np.linalg.eigh(C)
                     else:
-                        D = np.diag(C)
+                        # D = np.diag(C)
+                        pass
 
 
                 D = np.sqrt(D).reshape(-1, 1)
@@ -1113,6 +1128,363 @@ class SPSA:
                     self.sigma0,
                     np.array([y])
                 )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            state.logger.close()
+        return state.best, state.mean
+
+
+
+
+import math
+
+from typing import Any
+from typing import cast
+from typing import Optional
+
+_EPS = 1e-8
+_MEAN_MAX = 1e32
+_SIGMA_MAX = 1e32
+
+
+class _SepCMA:
+    def __init__(
+        self,
+        mean: np.ndarray,
+        sigma: float,
+        bounds: Optional[np.ndarray] = None,
+        n_max_resampling: int = 100,
+        seed: Optional[int] = None,
+        population_size: Optional[int] = None,
+    ):
+        assert sigma > 0, "sigma must be non-zero positive value"
+
+        assert np.all(
+            np.abs(mean) < _MEAN_MAX
+        ), f"Abs of all elements of mean vector must be less than {_MEAN_MAX}"
+
+        n_dim = len(mean)
+        assert n_dim > 1, "The dimension of mean must be larger than 1"
+
+        if population_size is None:
+            population_size = 4 + math.floor(3 * math.log(n_dim))  # (eq. 48)
+        assert population_size > 0, "popsize must be non-zero positive value."
+
+        mu = population_size // 2
+
+        # (eq.49)
+        weights_prime = np.array(
+            [math.log(mu + 1) - math.log(i + 1) for i in range(mu)]
+        )
+        weights = weights_prime / sum(weights_prime)
+        mu_eff = 1 / sum(weights**2)
+
+        # learning rate for the rank-one update
+        alpha_cov = 2
+        c1 = alpha_cov / ((n_dim + 1.3) ** 2 + mu_eff)
+        # learning rate for the rank-μ update
+        cmu_full = 2 / mu_eff / ((n_dim + np.sqrt(2)) ** 2) + (1 - 1 / mu_eff) * min(
+            1, (2 * mu_eff - 1) / ((n_dim + 2) ** 2 + mu_eff)
+        )
+        cmu = (n_dim + 2) / 3 * cmu_full
+
+        cm = 1  # (eq. 54)
+
+        # learning rate for the cumulation for the step-size control
+        c_sigma = (mu_eff + 2) / (n_dim + mu_eff + 3)
+        d_sigma = 1 + 2 * max(0, math.sqrt((mu_eff - 1) / (n_dim + 1)) - 1) + c_sigma
+        assert (
+            c_sigma < 1
+        ), "invalid learning rate for cumulation for the step-size control"
+
+        # learning rate for cumulation for the rank-one update
+        cc = 4 / (n_dim + 4)
+        assert cc <= 1, "invalid learning rate for cumulation for the rank-one update"
+
+        self._n_dim = n_dim
+        self._popsize = population_size
+        self._mu = mu
+        self._mu_eff = mu_eff
+
+        self._cc = cc
+        self._c1 = c1
+        self._cmu = cmu
+        self._c_sigma = c_sigma
+        self._d_sigma = d_sigma
+        self._cm = cm
+
+        # E||N(0, I)|| (p.28)
+        self._chi_n = math.sqrt(self._n_dim) * (
+            1.0 - (1.0 / (4.0 * self._n_dim)) + 1.0 / (21.0 * (self._n_dim**2))
+        )
+
+        self._weights = weights
+
+        # evolution path
+        self._p_sigma = np.zeros(n_dim)
+        self._pc = np.zeros(n_dim)
+
+        self._mean = mean
+        self._sigma = sigma
+        self._D: Optional[np.ndarray] = None
+        self._C: np.ndarray = np.ones(n_dim)
+
+        # bounds contains low and high of each parameter.
+        assert bounds is None or _is_valid_bounds(bounds, mean), "invalid bounds"
+        self._bounds = bounds
+        self._n_max_resampling = n_max_resampling
+
+        self._g = 0
+        self._rng = np.random.RandomState(seed)
+
+        # Termination criteria
+        self._tolx = 1e-12 * sigma
+        self._tolxup = 1e4
+        self._tolfun = 1e-12
+        self._tolconditioncov = 1e14
+
+        self._funhist_term = 10 + math.ceil(30 * n_dim / population_size)
+        self._funhist_values = np.empty(self._funhist_term * 2)
+
+    @property
+    def dim(self) -> int:
+        """A number of dimensions"""
+        return self._n_dim
+
+    @property
+    def population_size(self) -> int:
+        """A population size"""
+        return self._popsize
+
+    @property
+    def generation(self) -> int:
+        """Generation number which is monotonically incremented
+        when multi-variate gaussian distribution is updated."""
+        return self._g
+
+    def reseed_rng(self, seed: int) -> None:
+        self._rng.seed(seed)
+
+    def __getstate__(self) -> dict[str, Any]:
+        attrs = {}
+        for name in self.__dict__:
+            # Remove _rng in pickle serialized object.
+            if name == "_rng":
+                continue
+            attrs[name] = getattr(self, name)
+        return attrs
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        # Set _rng for unpickled object.
+        setattr(self, "_rng", np.random.RandomState())
+
+    def set_bounds(self, bounds: Optional[np.ndarray]) -> None:
+        """Update boundary constraints"""
+        assert bounds is None or _is_valid_bounds(bounds, self._mean), "invalid bounds"
+        self._bounds = bounds
+
+    def ask(self) -> np.ndarray:
+        """Sample a parameter"""
+        for i in range(self._n_max_resampling):
+            x = self._sample_solution()
+            if self._is_feasible(x):
+                return x
+        x = self._sample_solution()
+        x = self._repair_infeasible_params(x)
+        return x
+
+    def _eigen_decomposition(self) -> np.ndarray:
+        if self._D is not None:
+            return self._D
+        self._D = np.sqrt(np.where(self._C < 0, _EPS, self._C))
+        return self._D
+
+    def _sample_solution(self) -> np.ndarray:
+        D = self._eigen_decomposition()
+        z = self._rng.randn(self._n_dim)  # ~ N(0, I)
+        y = D * z  # ~ N(0, C)
+        x = self._mean + self._sigma * y  # ~ N(m, σ^2 C)
+        return x
+
+    def _is_feasible(self, param: np.ndarray) -> bool:
+        if self._bounds is None:
+            return True
+        return cast(
+            bool,
+            np.all(param >= self._bounds[:, 0]) and np.all(param <= self._bounds[:, 1]),
+        )  # Cast bool_ to bool
+
+    def _repair_infeasible_params(self, param: np.ndarray) -> np.ndarray:
+        if self._bounds is None:
+            return param
+
+        # clip with lower and upper bound.
+        param = np.where(param < self._bounds[:, 0], self._bounds[:, 0], param)
+        param = np.where(param > self._bounds[:, 1], self._bounds[:, 1], param)
+        return param
+
+    def tell(self, solutions: list[tuple[np.ndarray, float]]) -> None:
+        """Tell evaluation values"""
+
+        assert len(solutions) == self._popsize, "Must tell popsize-length solutions."
+        for s in solutions:
+            assert np.all(
+                np.abs(s[0]) < _MEAN_MAX
+            ), f"Abs of all param values must be less than {_MEAN_MAX} to avoid overflow errors"
+
+        self._g += 1
+        solutions.sort(key=lambda s: s[1])
+
+        # Stores 'best' and 'worst' values of the
+        # last 'self._funhist_term' generations.
+        funhist_idx = 2 * (self.generation % self._funhist_term)
+        self._funhist_values[funhist_idx] = solutions[0][1]
+        self._funhist_values[funhist_idx + 1] = solutions[-1][1]
+
+        # Sample new population of search_points, for k=1, ..., popsize
+        D = self._eigen_decomposition()
+        self._D = None
+
+        x_k = np.array([s[0] for s in solutions])  # ~ N(m, σ^2 C)
+        y_k = (x_k - self._mean) / self._sigma  # ~ N(0, C)
+
+        # Selection and recombination
+        y_w = np.sum(y_k[: self._mu].T * self._weights[: self._mu], axis=1)
+        self._mean += self._cm * self._sigma * y_w
+
+        # Step-size control
+        self._p_sigma = (1 - self._c_sigma) * self._p_sigma + math.sqrt(
+            self._c_sigma * (2 - self._c_sigma) * self._mu_eff
+        ) * (y_w / D)
+
+        norm_p_sigma = np.linalg.norm(self._p_sigma)
+        self._sigma *= np.exp(
+            (self._c_sigma / self._d_sigma) * (norm_p_sigma / self._chi_n - 1)
+        )
+        self._sigma = min(self._sigma, _SIGMA_MAX)
+
+        # Covariance matrix adaption
+        h_sigma_cond_left = norm_p_sigma / math.sqrt(
+            1 - (1 - self._c_sigma) ** (2 * (self._g + 1))
+        )
+        h_sigma_cond_right = (1.4 + 2 / (self._n_dim + 1)) * self._chi_n
+        h_sigma = 1.0 if h_sigma_cond_left < h_sigma_cond_right else 0.0  # (p.28)
+
+        # (eq.45)
+        self._pc = (1 - self._cc) * self._pc + h_sigma * math.sqrt(
+            self._cc * (2 - self._cc) * self._mu_eff
+        ) * y_w
+
+        delta_h_sigma = (1 - h_sigma) * self._cc * (2 - self._cc)  # (p.28)
+        assert delta_h_sigma <= 1
+
+        # (eq.47)
+        rank_one = self._pc**2
+        rank_mu = np.sum(
+            np.array([w * (y**2) for w, y in zip(self._weights, y_k)]), axis=0
+        )
+        self._C = (
+            (
+                1
+                + self._c1 * delta_h_sigma
+                - self._c1
+                - self._cmu * np.sum(self._weights)
+            )
+            * self._C
+            + self._c1 * rank_one
+            + self._cmu * rank_mu
+        )
+        
+    def should_stop(self) -> bool:
+        D = self._eigen_decomposition()
+
+        # Stop if the range of function values of the recent generation is below tolfun.
+        if (
+            self.generation > self._funhist_term
+            and np.max(self._funhist_values) - np.min(self._funhist_values)
+            < self._tolfun
+        ):
+            return True
+
+        # Stop if the std of the normal distribution is smaller than tolx
+        # in all coordinates and pc is smaller than tolx in all components.
+        if np.all(self._sigma * self._C < self._tolx) and np.all(
+            self._sigma * self._pc < self._tolx
+        ):
+            return True
+
+        # Stop if detecting divergent behavior.
+        if self._sigma * np.max(D) > self._tolxup:
+            return True
+
+        # No effect coordinates: stop if adding 0.2-standard deviations
+        # in any single coordinate does not change m.
+        if np.any(self._mean == self._mean + (0.2 * self._sigma * np.sqrt(self._C))):
+            return True
+
+        # No effect axis: stop if adding 0.1-standard deviation vector in
+        # any principal axis direction of C does not change m. "pycma" check
+        # axis one by one at each generation.
+        i = self.generation % self.dim
+        if np.all(
+            self._mean == self._mean + (0.1 * self._sigma * D[i] * np.ones(self._n_dim))
+        ):
+            return True
+
+        # Stop if the condition number of the covariance matrix exceeds 1e14.
+        condition_cov = np.max(D) / np.min(D)
+        if condition_cov > self._tolconditioncov:
+            return True
+
+        return False
+
+
+@dataclass
+class SepCMA:
+    n: int
+    budget: int = 25_000
+    data_folder: str = None
+    test_gen: int = 25
+    sigma0: float = 0.02     
+    lambda_: int = 16        
+    mu: int = None             
+    initialization: str = "zero"
+
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or init_lambda(self.n)
+        if self.lambda_ % 2 != 0:
+            self.lambda_ += 1
+        self.mu = self.lambda_ // 2            
+        
+        print(self.n, self.lambda_, self.mu, self.sigma0)
+
+    def __call__(self, problem: Objective):
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
+        m = init.get_x_prime(problem)
+
+        state = State("sep-CMA", self.data_folder, self.test_gen, self.lambda_)
+
+        cma = _SepCMA(m.ravel(), self.sigma0, population_size = self.lambda_, n_max_resampling=0)
+
+        try:
+            while self.budget > problem.n_evals:
+                X = np.vstack([cma.ask() for _ in range(cma.population_size)])
+                f = problem(X.T)
+                solutions = list(zip(X, f))
+                cma.tell(solutions)
+
+                best_idx = np.argmin(f)
+
+                state.update(
+                    problem,
+                    Solution(f[best_idx],  X[:, best_idx].copy()),
+                    Solution(np.mean(f), cma._mean.copy()),
+                    cma._sigma,
+                    f
+                )
+         
         except KeyboardInterrupt:
             pass
         finally:

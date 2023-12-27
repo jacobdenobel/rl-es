@@ -6,20 +6,23 @@ from itertools import product
 from objective import ENVIRONMENTS
 from algorithms import init_lambda
 
-MUJOCO = [
-    "Swimmer-v4",
-    "HalfCheetah-v4",
-    "Hopper-v4",
-    "Walker2d-v4",
-    "Ant-v4",
+ENVS = [
+    # "Swimmer-v4",
+    # "HalfCheetah-v4",
+    # "Hopper-v4",
+    # "Walker2d-v4",
+    # "Ant-v4",
     "Humanoid-v4",
+    # "LunarLander-v2", 
+    # "BipedalWalker-v3",
+  
 ]
 
 SEEDS = [x * 12 for x in range(0, 10)]
 STRATEGIES = [
     "csa",
-    "cma-es",
-    "sep-cma-es",
+    # "cma-es",
+    # "sep-cma-es",
 ]
 
 SIGMA = [
@@ -28,10 +31,16 @@ SIGMA = [
     0.01,
 ]
 
-LAMBDA = [4, "default", "n/2"]
-
+LAMBDA = [
+    # 4, 
+    # "default", 
+    # "n/2"
+    128, 
+    256
+]
+ 
 open_files = []
-for env in MUJOCO:
+for env in ENVS:
     meta = ENVIRONMENTS.get(env)
     n = meta.action_size * meta.state_size
     parameters = list(
@@ -43,7 +52,7 @@ for env in MUJOCO:
 
     for i, (strat, sigma, lamb, seed) in enumerate(parameters):
         if i % 10 == 0:
-            time.sleep(5)
+            time.sleep(50)
             load1, load5, load15 = os.getloadavg() 
             while load1 > 150:
                 print(" load too high, sleeping 10 seconds...", end="\r", flush=True)
@@ -75,7 +84,6 @@ for env in MUJOCO:
         )
         open_files.append(stdout)
         print(f"proc {i}/{n_proc}: " + " ".join(command))
-        
 
 for f in open_files:
     f.close()

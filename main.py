@@ -18,8 +18,9 @@ from algorithms import (
     CSA_EGS,
     CMAES,
     SPSA,
+    SepCMA
 )
-from objective import Objective, ENVIRONMENTS
+from objective import Objective, ENVIRONMENTS, GaussianProjection
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
 STRATEGIES = (
@@ -38,6 +39,7 @@ STRATEGIES = (
     "sep-cma-es",
     "active-cma-es",
     "active-sep-cma-es",
+    "sepcma"
 )
 
 if __name__ == "__main__":
@@ -133,7 +135,13 @@ if __name__ == "__main__":
         "--revaluate_best_after",
         type=int,
         default=None,
+    )   
+    parser.add_argument(
+        "--reduce_state",
+        type=int,
+        default=None,
     )
+
 
     args = parser.parse_args()
 
@@ -178,6 +186,11 @@ if __name__ == "__main__":
         if args.lamb is not None:
             strategy_name = f"{strategy_name}-lambda-{args.lamb}"
 
+    if args.reduce_state:
+        strategy_name = f"{strategy_name}-reduced{args.reduce_state}"
+        env_setting.obs_mapper = GaussianProjection(args.reduce_state, env_setting.state_size, env_setting.obs_mapper)
+        env_setting.state_size = args.reduce_state
+
     data_folder = f"{DATA}/{args.env_name}/{strategy_name}/{t}"
     if args.play is None:
         os.makedirs(data_folder, exist_ok=True)
@@ -188,7 +201,7 @@ if __name__ == "__main__":
     elif args.strategy == "ars":
         args.normalized = False
         args.regularize = False
-
+    
     obj = Objective(
         env_setting,
         args.n_episodes,
@@ -204,6 +217,8 @@ if __name__ == "__main__":
         regularized=args.regularized,
         seed_train_envs=args.seed if args.seed_train_envs else None,
     )
+
+
     if args.play is None:
         obj.open()
         if args.strategy == "maes":
@@ -311,6 +326,17 @@ if __name__ == "__main__":
                 mu=args.mu,
                 initialization=args.initialization,
                 sep=args.strategy == "sep-cma-egs",
+            )
+        elif args.strategy == "sepcma":
+            optimizer = SepCMA(
+                obj.n,
+                args.budget,
+                data_folder=data_folder,
+                test_gen=args.test_every_nth_iteration,
+                sigma0=args.sigma0,
+                lambda_=args.lamb,
+                mu=args.mu,
+                initialization=args.initialization,
             )
         elif args.strategy.endswith("cma-es"):
             optimizer = CMAES(

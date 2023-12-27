@@ -18,17 +18,14 @@ def uint8tofloat(obs):
 
 
 class GaussianProjection:
-    def __init__(self, n_components, n_features, mapper=identity, orthogonal=True):
-        # self.projection = np.random.normal(
-        #     loc=0.0, scale=1.0 / np.sqrt(n_components), size=(n_components, n_features)
-        # )
-        # if orthogonal:
-        #     u, s, vh = np.linalg.svd(self.projection, full_matrices=False)
-        #     self.projection = u @ vh
-
-        self.projection = np.sqrt(3) * np.random.choice(
+    def __init__(self, n_components, n_features, mapper=identity, orthogonal=False):
+        rng = np.random.default_rng(42)
+        self.projection = np.sqrt(3) * rng.choice(
             [-1, 0, 1], p=[1 / 6, 2 / 3, 1 / 6], size=(n_components, n_features)
         )
+        if orthogonal:
+            u, s, vh = np.linalg.svd(self.projection, full_matrices=False)
+            self.projection = u @ vh
         self.mapper = mapper
 
     def __call__(self, obs):
@@ -164,6 +161,10 @@ class EnvSetting:
             env = self.wrapper(env)
         return env
 
+    @property
+    def n(self):
+        return self.state_size * self.action_size
+
 
 ENVIRONMENTS = {
     "CartPole-v1": EnvSetting("CartPole-v1", 1000),
@@ -198,7 +199,7 @@ ENVIRONMENTS = {
     ),
     "Humanoid-v4": EnvSetting(
         "Humanoid-v4",
-        100_000,
+        500_000,
         lambda x: x - 5,
         last_activation=lambda x: 0.4 * np.tanh(x),
     ),
@@ -473,7 +474,10 @@ class Objective:
             actions = self.net(self.normalizer(observations))
             self.normalizer.observe(observations)
             observations, rewards, dones, trunc, *_ = envs.step(actions)
-            rewards = self.setting.reward_shaping(rewards)
+            
+            if count:
+                rewards = self.setting.reward_shaping(rewards)
+
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
             if not self.eval_total_timesteps and np.logical_or(dones, trunc):
                 break
@@ -531,8 +535,8 @@ class Objective:
                 self.normalizer.observe(obs)
 
             observations, rewards, dones, trunc, info = self.envs.step(actions)
-
-            rewards = self.setting.reward_shaping(rewards)
+            if count:
+                rewards = self.setting.reward_shaping(rewards)
             data_over_time[t] = np.vstack([rewards, np.logical_or(dones, trunc)])
 
             first_ep_done = data_over_time[:, 1, :].sum(axis=0) >= 1
@@ -592,7 +596,7 @@ class Objective:
             
             self.play_check(loc, 'rgb_array_list', name)
 
-        return -np.mean(returns), -np.median(returns), np.std(returns)
+        return np.mean(returns), np.median(returns), np.std(returns)
     
     def load_network(self, loc: str):
         net = Network(
@@ -621,8 +625,9 @@ class Objective:
         try:
             for episode_index in range(n_reps):
                 env = self.setting.make(render_mode=render_mode)
-                env.metadata['render_fps'] = max(env.metadata.get('render_fps') or 60, 60)
-
+                if render_mode == "rgb_array_list":
+                    env.metadata['render_fps'] = max(env.metadata.get('render_fps') or 60, 60)
+                
                 observation, *_ = env.reset()
 
                 if render_mode == "human":
@@ -630,7 +635,6 @@ class Objective:
                 done = False
                 ret = 0
                 step_index = 0
-                print("playing test episode")
                 while not done:
                     observation = self.setting.obs_mapper(observation)
                     obs = normalizer(observation.reshape(1, -1))
@@ -644,7 +648,7 @@ class Objective:
                             f"step {step_index}, return {ret: .3f} {' ' * 25}", end="\r"
                         )
                     step_index += 1
-                print("done")
+                returns.append(ret)
                 if render_mode == "human":
                     print()
                 if render_mode == "rgb_array_list" and episode_index == 0:
