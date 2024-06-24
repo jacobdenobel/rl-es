@@ -8,9 +8,9 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 from gymnasium.utils.save_video import save_video
 
-from network import Network, identity, MinMaxNormalizer, argmax, softmax
 from skimage.measure import block_reduce
 
+from .network import Network, identity, MinMaxNormalizer, argmax, softmax
 
 def uint8tofloat(obs):
     return ((obs.astype(float) / 255) * 2) - 1

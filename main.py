@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import gymnasium as gym
-from algorithms import (
+from rl_es.algorithms import (
     MAES,
     DR1,
     ARS,
@@ -20,7 +20,7 @@ from algorithms import (
     SPSA,
     SepCMA
 )
-from objective import Objective, ENVIRONMENTS, GaussianProjection
+from rl_es.objective import Objective, ENVIRONMENTS, GaussianProjection 
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
 STRATEGIES = (

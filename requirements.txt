@@ -1,9 +1,0 @@
-black
-gymnasium[box2d]
-matplotlib
-moviepy
-numpy
-pandas
-scipy
-scikit-image
-

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.stats import qmc
 
-from objective import Objective
+from .objective import Objective
 
 
 SIGMA_MAX = 1e3
