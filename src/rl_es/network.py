@@ -1,8 +1,6 @@
 import numpy as np
 from dataclasses import dataclass, field
-from utils import softmax, argmax, identity, clip
-
-
+from .utils import softmax, argmax, identity, clip
 
 
 @dataclass

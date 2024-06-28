@@ -19,7 +19,9 @@ from rl_es.algorithms import (
     SepCMA,
     ModCMA
 )
-from rl_es.objective import Objective, ENVIRONMENTS, GaussianProjection 
+from rl_es.objective import Objective
+from rl_es.setting import ENVIRONMENTS
+from rl_es.utils import GaussianProjection 
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
 STRATEGIES = (
@@ -385,7 +387,7 @@ if __name__ == "__main__":
         obj.store_video = True
         obj.n_test_episodes = 1
         obj.data_folder = os.path.dirname(data_folder)
-        obj.play_check(weights, render_mode="rgb_array_list", name="test")
+        obj.play_check(args.play, render_mode="rgb_array_list", name="test")
 
     # best_test = obj.play(best, data_folder, "best", plot)
     # print("Test with best x (median max):", best_test)

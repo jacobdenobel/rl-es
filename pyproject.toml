@@ -25,6 +25,7 @@ dependencies = [
   "ioh",
   "matplotlib",
   "moviepy",
+  "modcma",
   "numpy",
   "pandas",
   "scikit-image",
