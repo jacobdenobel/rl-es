@@ -3,44 +3,62 @@ import time
 import subprocess
 from itertools import product
 
-from objective import ENVIRONMENTS
+from setting import ENVIRONMENTS
 from algorithms import init_lambda
 
 ENVS = [
-    # "Swimmer-v4",
-    # "HalfCheetah-v4",
-    # "Hopper-v4",
-    # "Walker2d-v4",
-    # "Ant-v4",
-    "Humanoid-v4",
+    # "CartPole-v1",
+    # "Acrobot-v1",
+    # "Pendulum-v1",
     # "LunarLander-v2", 
     # "BipedalWalker-v3",
-  
+    "Swimmer-v4",
+    "HalfCheetah-v4",
+    "Hopper-v4",
+    "Walker2d-v4",
+    "Ant-v4",
+    # "Humanoid-v4",
+    
+    # "SpaceInvaders-v5",
+    # "Atlantis-v5",
+    # "Assault-v5",
+    # "BeamRider-v5",
+    # "Breakout-v5", # TODO
+    # "Boxing-v5",
+    # "Pong-v5",
+    # "CrazyClimber-v5",
+    # "Enduro-v5", 
+    # "Qbert-v5",
+    # "SpaceInvaders-v5"
 ]
 
 SEEDS = [x * 12 for x in range(0, 10)]
 STRATEGIES = [
-    "csa",
-    # "cma-es",
+    # "csa",
+    # "cma-es", 
     # "sep-cma-es",
+    "r-cma-es"
 ]
 
 SIGMA = [
-    0.1,
-    0.05,
-    0.01,
+    # 5.,
+    # 2.,
+    # .5,
+    # 0.1,
+    # 0.05,
+    # 0.01,
+    1,
 ]
 
 LAMBDA = [
     # 4, 
     # "default", 
     # "n/2"
-    128, 
-    256
+    256,
 ]
  
 open_files = []
-for env in ENVS:
+for j, env in enumerate(ENVS, 1):
     meta = ENVIRONMENTS.get(env)
     n = meta.action_size * meta.state_size
     parameters = list(
@@ -60,7 +78,7 @@ for env in ENVS:
                 load1, load5, load15 = os.getloadavg() 
                 print(f" proc {i}/{n_proc}, load (1, 5, 15): ({load1, load5, load15})", end=" ")
 
-        stdout = open(f"run/{i}", "w+") 
+        stdout = open(f"run/{i*j}", "w+") 
         command = [
                 "python",
                 "main.py",
@@ -75,6 +93,7 @@ for env in ENVS:
                 str(sigma),
                 "--lamb",
                 str(lamb),
+                "--break_timesteps"
         ]
         subprocess.Popen(command,
             start_new_session=True,

@@ -1,25 +1,8 @@
 import numpy as np
 from dataclasses import dataclass, field
+from utils import softmax, argmax, identity, clip
 
 
-def softmax(x):
-    x_exp = np.exp(x - np.max(x))
-    return x_exp / x_exp.sum()
-
-
-def argmax(x):
-    return np.argmax(x, axis=1)
-
-
-def identity(x):
-    return x
-
-
-def clip(lb, ub):
-    def inner(x):
-        return np.clip(x, lb, ub)
-
-    return inner
 
 
 @dataclass

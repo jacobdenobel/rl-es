@@ -4,7 +4,7 @@ run
 *pyc
 __pycache__/
 *.png
-*.ipynb
+.ipynb
 .ipynb_checkpoints/
 marlio.lua
 
