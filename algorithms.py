@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.stats import qmc
+from modcma import AskTellCMAES
+
 
 from objective import Objective
 
@@ -59,7 +61,7 @@ class Logger:
 
 
 class State:
-    def __init__(self, name, data_folder, test_gen, lamb, revaluate_best_after: int = 1):
+    def __init__(self, name, data_folder, test_gen, lamb, revaluate_best_after: int = 5):
         self.counter = 0
         self.best = Solution()
         self.mean = Solution()
@@ -94,7 +96,7 @@ class State:
         if self.revaluate_best_every is not None and self.revaluate_best_every < self.time_since_best_update:
             self.time_since_best_update = 0
             best_old = self.best.y
-            self.best.y = problem.eval_sequential(self.best.x, False)
+            self.best.y = problem.eval_sequential(self.best.x, False, True)
             # got_test, got_mean, got_std = problem.test_policy(
             #     self.best.x,
             #     name=f"t-{self.counter}-best",
@@ -113,7 +115,7 @@ class State:
         self.mean = mean
 
         print(
-            f"{self.name}, counter: {self.counter}, dt: {dt:.3f} n_evals {problem.n_evals}, n_episodes: {problem.n_train_episodes} "
+            f"{self.name}, counter: {self.counter}, dt: {dt:.3f} n_timesteps {problem.n_train_timesteps:.2e}, n_episodes: {problem.n_train_episodes} "
             f"best (train): {-self.best.y}, mean (train): {-mean.y}, sigma: {sigma} "
             f"best (test): {self.best_test}, mean (test): {self.mean_test}"
         )
@@ -334,7 +336,7 @@ class Initializer:
 @dataclass
 class DR1:
     n: int
-    budget: int = 25_000
+    
     mu: int = None
     lambda_: int = None
     sigma0: float = .5
@@ -370,7 +372,7 @@ class DR1:
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
@@ -414,7 +416,7 @@ class DR1:
 @dataclass
 class DR2:
     n: int
-    budget: int = 25_000
+    
     mu: int = None
     lambda_: int = None
     sigma0: float = .5
@@ -454,7 +456,7 @@ class DR2:
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
@@ -494,7 +496,7 @@ class DR2:
 @dataclass
 class CSA:
     n: int
-    budget: int = 25_000
+    
     lambda_: int = None
     mu: float = None
     sigma0: float = .5
@@ -529,7 +531,7 @@ class CSA:
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
@@ -565,7 +567,7 @@ class CSA:
 @dataclass
 class MAES:
     n: int
-    budget: int = 25_000
+    
     lambda_: int = None
     mu: float = None
     sigma0: float = .5
@@ -605,7 +607,7 @@ class MAES:
         uch = UncertaintyHandling(self.uncertainty_handling)
         n_samples = self.lambda_ if not self.mirrored else self.lambda_ // 2
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 Z = np.random.normal(size=(self.n, n_samples))
                 if self.mirrored:
                     Z = np.hstack([Z, -Z])
@@ -678,7 +680,7 @@ ARS_OPTIMAL_PARAMETERS = {
 @dataclass
 class ARS:
     n: int
-    budget: int = 25_000
+    
     data_folder: str = None
     test_gen: int = 25
     alpha: float = 0.02       # learning rate alpha
@@ -698,7 +700,7 @@ class ARS:
 
         state = State("ARS", self.data_folder, self.test_gen, self.lambda_ * 2)
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 delta = np.random.normal(size=(self.n, self.lambda_))
 
                 neg = m - (self.sigma0 * delta)
@@ -740,7 +742,7 @@ class ARS:
 @dataclass
 class EGS:
     n: int
-    budget: int = 25_000
+    
     data_folder: str = None
     test_gen: int = 25
     sigma0: float = 0.02     
@@ -761,7 +763,7 @@ class EGS:
         sigma = self.sigma0
 
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 Z = np.random.normal(size=(self.n, self.lambda_))
                 y_pos = m + sigma * Z
                 y_neg = m - sigma * Z
@@ -793,7 +795,7 @@ class EGS:
 @dataclass
 class CMA_EGS:
     n: int
-    budget: int = 25_000
+    
     data_folder: str = None
     test_gen: int = 25
     sigma0: float = 0.02     
@@ -824,7 +826,7 @@ class CMA_EGS:
         state = State("CMA-EGS", self.data_folder, self.test_gen, self.lambda_)
         sigma = self.sigma0
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 Z = np.random.normal(size=(self.n, self.lambda_))
                 Y = np.dot(B, D * Z)
                 y_pos = m + (sigma * Y)
@@ -881,7 +883,7 @@ class CMA_EGS:
 @dataclass
 class CSA_EGS:
     n: int
-    budget: int = 25_000
+    
     data_folder: str = None
     test_gen: int = 25
     sigma0: float = 0.02     
@@ -906,7 +908,7 @@ class CSA_EGS:
         state = State("CSA-EGS", self.data_folder, self.test_gen, self.lambda_)
         sigma = self.sigma0
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 Z = np.random.normal(size=(self.n, self.lambda_))
                 y_pos = m + (sigma * Z)
                 y_neg = m - (sigma * Z)
@@ -940,9 +942,71 @@ class CSA_EGS:
 
 
 @dataclass
+class ModCMA:
+    n: int
+    
+    data_folder: str = None
+    test_gen: int = 25
+    sigma0: float = 0.02     
+    lambda_: int = 16        
+    mu: int = None             
+    initialization: str = "zero"
+
+    def __post_init__(self):
+        self.lambda_ = self.lambda_ or init_lambda(self.n)
+
+        if self.lambda_ % 2 != 0:
+            self.lambda_ += 1
+        self.mu = self.lambda_ // 2            
+        
+        print(self.n, self.lambda_, self.mu, self.sigma0)
+
+    def __call__(self, problem: Objective):
+        init = Initializer(self.n, method=self.initialization, max_evals=500)
+        m = init.get_x_prime(problem)
+
+        state = State("mod-CMA", self.data_folder, self.test_gen, self.lambda_)
+
+        cma = AskTellCMAES(
+            int(self.n), 
+            # budget=self.budget, 
+            sigma0 = self.sigma0,
+            # x0=m, 
+            lambda_ = self.lambda_,
+            local_restart = 'BIPOP',
+            active=True,
+            mirrored="mirrored pairwise"
+        )
+
+        try:
+            while not problem.should_stop():
+                X = np.hstack([cma.ask() for _ in range(cma.parameters.lambda_)])
+                f = problem(X)
+
+                for x,y in zip(X, f):
+                    cma.tell(x, y)
+
+                best_idx = np.argmin(f)
+
+                state.update(
+                    problem,
+                    Solution(f[best_idx],  X[:, best_idx].copy()),
+                    Solution(np.mean(f), cma.parameters.m.copy()),
+                    cma.parameters.sigma,
+                    f
+                )
+         
+        except KeyboardInterrupt:
+            pass
+        finally:
+            state.logger.close()
+        return state.best, state.mean
+
+
+@dataclass
 class CMAES:
     n: int
-    budget: int = 25_000
+    
     data_folder: str = None
     test_gen: int = 25
     sigma0: float = 0.02     
@@ -958,7 +1022,7 @@ class CMAES:
         self.lambda_ = self.lambda_ or init_lambda(self.n)
         if self.sep:
             # self.tpa = True
-            self.lambda_ = min(4, self.lambda_)
+            self.lambda_ = max(4, self.lambda_)
 
         if self.lambda_ % 2 != 0:
             self.lambda_ += 1
@@ -1010,7 +1074,9 @@ class CMAES:
         damp = n ** 0.5 
         
         try:
-            while self.budget > problem.n_evals:
+            # X_old = None
+            # f_old = None
+            while not problem.should_stop():
                 active_tpa = self.tpa and state.counter != 0
                 n_offspring = self.lambda_ - (2 * active_tpa)
                 Z = np.random.normal(0, 1, (n, n_offspring))
@@ -1019,11 +1085,19 @@ class CMAES:
                     Y = np.c_[-dm, dm, Y]
 
                 X = m + (sigma * Y)
+
                 f = np.array(problem(X))
+                # if X_old is not None:
+                #     X = np.c_[X, X_old]
+                #     Y = np.c_[Y, (X_old - m) / sigma]
+                #     f = np.r_[f, f_old]
 
                 # select
                 fidx = np.argsort(f)
                 mu_best = fidx[: self.mu]
+
+                X_old = X[:, mu_best].copy()
+                f_old = f[mu_best].copy()
 
                 # recombine
                 m_old = m.copy()
@@ -1097,7 +1171,7 @@ class CMAES:
 @dataclass
 class SPSA:
     n: int
-    budget: int = 25_000
+    
     data_folder: str = None
     test_gen: int = 25
     mu: int = 1
@@ -1114,7 +1188,7 @@ class SPSA:
         
         iterator = spsa.iterator.minimize(problem, m)
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 data = next(iterator)
                 x_best = data['x_best']
                 y_best, *_ = data['y_best']
@@ -1444,7 +1518,7 @@ class _SepCMA:
 @dataclass
 class SepCMA:
     n: int
-    budget: int = 25_000
+    
     data_folder: str = None
     test_gen: int = 25
     sigma0: float = 0.02     
@@ -1469,7 +1543,7 @@ class SepCMA:
         cma = _SepCMA(m.ravel(), self.sigma0, population_size = self.lambda_, n_max_resampling=0)
 
         try:
-            while self.budget > problem.n_evals:
+            while not problem.should_stop():
                 X = np.vstack([cma.ask() for _ in range(cma.population_size)])
                 f = problem(X.T)
                 solutions = list(zip(X, f))

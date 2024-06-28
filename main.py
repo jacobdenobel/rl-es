@@ -18,9 +18,12 @@ from algorithms import (
     CSA_EGS,
     CMAES,
     SPSA,
-    SepCMA
+    SepCMA,
+    ModCMA
 )
-from objective import Objective, ENVIRONMENTS, GaussianProjection
+from utils import GaussianProjection
+from setting import ENVIRONMENTS
+from objective import Objective 
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
 STRATEGIES = (
@@ -39,15 +42,173 @@ STRATEGIES = (
     "sep-cma-es",
     "active-cma-es",
     "active-sep-cma-es",
-    "sepcma"
+    "sepcma",
+    "modcma",
+    "r-cma-es"
 )
+
+def run_optimizer(args, obj):
+    obj.open()
+    if args.strategy == "maes":
+        optimizer = MAES(
+            obj.n,
+            mu=args.mu,
+            lambda_=args.lamb,
+            sigma0=args.sigma0,
+            data_folder=data_folder,
+            initialization=args.initialization,
+            uncertainty_handling=args.uncertainty_handled,
+            test_gen=args.test_every_nth_iteration,
+            mirrored=args.mirrored,
+            scale_by_std=args.scale_by_std,
+        )
+    elif args.strategy == "spsa":
+        optimizer = SPSA(
+            obj.n,
+            data_folder=data_folder,
+            initialization=args.initialization,
+            test_gen=args.test_every_nth_iteration,
+        )
+    elif args.strategy == "dr1":
+        optimizer = DR1(
+            obj.n,
+            sigma0=args.sigma0,
+            mu=args.mu,
+            lambda_=args.lamb,
+            data_folder=data_folder,
+            initialization=args.initialization,
+            uncertainty_handling=args.uncertainty_handled,
+            test_gen=args.test_every_nth_iteration,
+            mirrored=args.mirrored,
+        )
+    elif args.strategy == "dr2":
+        optimizer = DR2(
+            obj.n,
+            sigma0=args.sigma0,
+            mu=args.mu,
+            lambda_=args.lamb,
+            data_folder=data_folder,
+            initialization=args.initialization,
+            uncertainty_handling=args.uncertainty_handled,
+            test_gen=args.test_every_nth_iteration,
+            mirrored=args.mirrored,
+        )
+    elif args.strategy == "csa":
+        optimizer = CSA(
+            obj.n,
+            sigma0=args.sigma0,
+            mu=args.mu,
+            lambda_=args.lamb,
+            data_folder=data_folder,
+            initialization=args.initialization,
+            uncertainty_handling=args.uncertainty_handled,
+            test_gen=args.test_every_nth_iteration,
+            mirrored=args.mirrored,
+        )
+
+    elif args.strategy == "ars" or args.strategy == "ars-v2":
+        if args.ars_optimal and (
+            params := ARS_OPTIMAL_PARAMETERS.get(args.env_name)
+        ):
+            args.alpha = params.alpha
+            args.sigma0 = params.sigma
+            args.lamb = params.lambda0
+            args.mu = params.mu
+
+        optimizer = ARS(
+            obj.n,
+            sigma0=args.sigma0,
+            alpha=args.alpha,
+            data_folder=data_folder,
+            test_gen=args.test_every_nth_iteration,
+            mu=args.mu,
+            lambda_=args.lamb,
+            initialization=args.initialization,
+        )
+    elif args.strategy == "egs":
+        optimizer = EGS(
+            obj.n,
+            data_folder=data_folder,
+            test_gen=args.test_every_nth_iteration,
+            sigma0=args.sigma0,
+            lambda_=args.lamb,
+            mu=args.mu,
+            initialization=args.initialization,
+            # kappa=None
+        )
+    elif args.strategy == "cma-egs" or args.strategy == "sep-cma-egs":
+        optimizer = CMA_EGS(
+            obj.n,
+            data_folder=data_folder,
+            test_gen=args.test_every_nth_iteration,
+            sigma0=args.sigma0,
+            lambda_=args.lamb,
+            mu=args.mu,
+            initialization=args.initialization,
+            sep=args.strategy == "sep-cma-egs",
+        )
+    elif args.strategy == "sepcma":
+        optimizer = SepCMA(
+            obj.n,
+            data_folder=data_folder,
+            test_gen=args.test_every_nth_iteration,
+            sigma0=args.sigma0,
+            lambda_=args.lamb,
+            mu=args.mu,
+            initialization=args.initialization,
+        )
+    elif args.strategy == "r-cma-es":
+        optimizer = ModCMA(
+            obj.n,
+            data_folder=data_folder,
+            test_gen=args.test_every_nth_iteration,
+            sigma0=args.sigma0,
+            lambda_=args.lamb,
+            mu=args.mu,
+            initialization=args.initialization,
+            repelling=True
+        )
+    elif args.strategy.endswith("cma-es"):
+        optimizer = CMAES(
+            obj.n,
+            data_folder=data_folder,
+            test_gen=args.test_every_nth_iteration,
+            sigma0=args.sigma0,
+            lambda_=args.lamb,
+            mu=args.mu,
+            initialization=args.initialization,
+            sep="sep" in args.strategy,
+            active="active" in args.strategy
+        )
+    elif args.strategy == "csa-egs":
+        optimizer = CSA_EGS(
+            obj.n,
+            data_folder=data_folder,
+            test_gen=args.test_every_nth_iteration,
+            sigma0=args.sigma0,
+            lambda_=args.lamb,
+            mu=args.mu,
+            initialization=args.initialization,
+        )
+    else:
+        raise ValueError()
+
+    args.sigma0 = optimizer.sigma0
+    args.mu = int(optimizer.mu)
+    args.lambda_ = int(optimizer.lambda_)
+    args.n = int(obj.n)
+
+    with open(os.path.join(data_folder, "settings.json"), "w+") as f:
+        json.dump(vars(args), f)
+
+    best, mean = optimizer(obj)
+    np.save(f"{data_folder}/best.npy", best.x)
+    np.save(f"{data_folder}/mean.npy", mean.x)
+    best, mean = best.x, mean.x
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument(
-        "--budget", default=None, help="Number of fitness evaluations", type=int
-    )
     parser.add_argument(
         "--seed", default=42, help="Set seed for reproducibility", type=int
     )
@@ -113,6 +274,8 @@ if __name__ == "__main__":
     parser.add_argument("--regularized", action="store_true")
     parser.add_argument("--seed_train_envs", action="store_true")
     parser.add_argument("--scale_by_std", action="store_true")
+    parser.add_argument("--break_timesteps", action="store_true")
+
     parser.add_argument(
         "--initialization",
         type=str,
@@ -125,6 +288,7 @@ if __name__ == "__main__":
         "--env_name", type=str, default="LunarLander-v2", choices=ENVIRONMENTS.keys()
     )
     parser.add_argument("--eval_total_timesteps", action="store_true")
+    parser.add_argument("--penalize_inactivity", action="store_true")
 
     parser.add_argument(
         "--play",
@@ -154,8 +318,6 @@ if __name__ == "__main__":
     if args.n_timesteps is None:
         args.n_timesteps = env_setting.max_episode_steps
 
-    if args.budget is None:
-        args.budget = env_setting.budget
 
     print(args)
     print(env_setting)
@@ -206,6 +368,7 @@ if __name__ == "__main__":
         env_setting,
         args.n_episodes,
         args.n_timesteps,
+        env_setting.max_episode_steps,
         args.n_hidden,
         args.n_layers,
         normalized=args.normalized,
@@ -216,178 +379,19 @@ if __name__ == "__main__":
         data_folder=data_folder,
         regularized=args.regularized,
         seed_train_envs=args.seed if args.seed_train_envs else None,
+        penalize_inactivity=args.penalize_inactivity,
+        break_timesteps=args.break_timesteps
     )
 
-
     if args.play is None:
-        obj.open()
-        if args.strategy == "maes":
-            optimizer = MAES(
-                obj.n,
-                args.budget,
-                mu=args.mu,
-                lambda_=args.lamb,
-                sigma0=args.sigma0,
-                data_folder=data_folder,
-                initialization=args.initialization,
-                uncertainty_handling=args.uncertainty_handled,
-                test_gen=args.test_every_nth_iteration,
-                mirrored=args.mirrored,
-                scale_by_std=args.scale_by_std,
-            )
-        elif args.strategy == "spsa":
-            optimizer = SPSA(
-                obj.n,
-                args.budget,
-                data_folder=data_folder,
-                initialization=args.initialization,
-                test_gen=args.test_every_nth_iteration,
-            )
-        elif args.strategy == "dr1":
-            optimizer = DR1(
-                obj.n,
-                args.budget,
-                sigma0=args.sigma0,
-                mu=args.mu,
-                lambda_=args.lamb,
-                data_folder=data_folder,
-                initialization=args.initialization,
-                uncertainty_handling=args.uncertainty_handled,
-                test_gen=args.test_every_nth_iteration,
-                mirrored=args.mirrored,
-            )
-        elif args.strategy == "dr2":
-            optimizer = DR2(
-                obj.n,
-                args.budget,
-                sigma0=args.sigma0,
-                mu=args.mu,
-                lambda_=args.lamb,
-                data_folder=data_folder,
-                initialization=args.initialization,
-                uncertainty_handling=args.uncertainty_handled,
-                test_gen=args.test_every_nth_iteration,
-                mirrored=args.mirrored,
-            )
-        elif args.strategy == "csa":
-            optimizer = CSA(
-                obj.n,
-                args.budget,
-                sigma0=args.sigma0,
-                mu=args.mu,
-                lambda_=args.lamb,
-                data_folder=data_folder,
-                initialization=args.initialization,
-                uncertainty_handling=args.uncertainty_handled,
-                test_gen=args.test_every_nth_iteration,
-                mirrored=args.mirrored,
-            )
-
-        elif args.strategy == "ars" or args.strategy == "ars-v2":
-            if args.ars_optimal and (
-                params := ARS_OPTIMAL_PARAMETERS.get(args.env_name)
-            ):
-                args.alpha = params.alpha
-                args.sigma0 = params.sigma
-                args.lamb = params.lambda0
-                args.mu = params.mu
-
-            optimizer = ARS(
-                obj.n,
-                args.budget,
-                sigma0=args.sigma0,
-                alpha=args.alpha,
-                data_folder=data_folder,
-                test_gen=args.test_every_nth_iteration,
-                mu=args.mu,
-                lambda_=args.lamb,
-                initialization=args.initialization,
-            )
-        elif args.strategy == "egs":
-            optimizer = EGS(
-                obj.n,
-                args.budget,
-                data_folder=data_folder,
-                test_gen=args.test_every_nth_iteration,
-                sigma0=args.sigma0,
-                lambda_=args.lamb,
-                mu=args.mu,
-                initialization=args.initialization,
-                # kappa=None
-            )
-        elif args.strategy == "cma-egs" or args.strategy == "sep-cma-egs":
-            optimizer = CMA_EGS(
-                obj.n,
-                args.budget,
-                data_folder=data_folder,
-                test_gen=args.test_every_nth_iteration,
-                sigma0=args.sigma0,
-                lambda_=args.lamb,
-                mu=args.mu,
-                initialization=args.initialization,
-                sep=args.strategy == "sep-cma-egs",
-            )
-        elif args.strategy == "sepcma":
-            optimizer = SepCMA(
-                obj.n,
-                args.budget,
-                data_folder=data_folder,
-                test_gen=args.test_every_nth_iteration,
-                sigma0=args.sigma0,
-                lambda_=args.lamb,
-                mu=args.mu,
-                initialization=args.initialization,
-            )
-        elif args.strategy.endswith("cma-es"):
-            optimizer = CMAES(
-                obj.n,
-                args.budget,
-                data_folder=data_folder,
-                test_gen=args.test_every_nth_iteration,
-                sigma0=args.sigma0,
-                lambda_=args.lamb,
-                mu=args.mu,
-                initialization=args.initialization,
-                sep="sep" in args.strategy,
-                active="active" in args.strategy
-            )
-        elif args.strategy == "csa-egs":
-            optimizer = CSA_EGS(
-                obj.n,
-                args.budget,
-                data_folder=data_folder,
-                test_gen=args.test_every_nth_iteration,
-                sigma0=args.sigma0,
-                lambda_=args.lamb,
-                mu=args.mu,
-                initialization=args.initialization,
-            )
-        else:
-            raise ValueError()
-
-        args.sigma0 = optimizer.sigma0
-        args.mu = int(optimizer.mu)
-        args.lambda_ = int(optimizer.lambda_)
-        args.n = int(obj.n)
-
-        with open(os.path.join(data_folder, "settings.json"), "w+") as f:
-            json.dump(vars(args), f)
-
-        best, mean = optimizer(obj)
-        np.save(f"{data_folder}/best.npy", best.x)
-        np.save(f"{data_folder}/mean.npy", mean.x)
-        best, mean = best.x, mean.x
-
+        run_optimizer(args, obj)
     else:
-        data_folder = args.play
-        weights = np.load(f"{args.play}.npy")
-
-        obj.normalizer.mean = np.load(f"{args.play}-norm-mean.npy")
-        obj.normalizer.std = np.load(f"{args.play}-norm-std.npy")
         obj.store_video = True
-        obj.n_test_episodes = 1
-        obj.data_folder = os.path.dirname(data_folder)
-        obj.play_check(weights, render_mode="rgb_array_list", name="test")
+        obj.data_folder = args.play
+        
+        returns = obj.play_check(args.play, render_mode="rgb_array_list", name="test", n_reps=1)
+        print(returns)
+
 
     # best_test = obj.play(best, data_folder, "best", plot)
     # print("Test with best x (median max):", best_test)
