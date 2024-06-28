@@ -2,10 +2,8 @@ import os
 import time
 import argparse
 import json
-from dataclasses import dataclass
-
 import numpy as np
-import gymnasium as gym
+
 from rl_es.algorithms import (
     MAES,
     DR1,
@@ -379,15 +377,10 @@ if __name__ == "__main__":
         best, mean = best.x, mean.x
 
     else:
-        data_folder = args.play
-        weights = np.load(f"{args.play}.npy")
-
-        obj.normalizer.mean = np.load(f"{args.play}-norm-mean.npy")
-        obj.normalizer.std = np.load(f"{args.play}-norm-std.npy")
         obj.store_video = True
         obj.n_test_episodes = 1
         obj.data_folder = os.path.dirname(data_folder)
-        obj.play_check(weights, render_mode="rgb_array_list", name="test")
+        obj.play_check(args.play, render_mode="rgb_array_list", name="test")
 
     # best_test = obj.play(best, data_folder, "best", plot)
     # print("Test with best x (median max):", best_test)

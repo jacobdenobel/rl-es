@@ -18,6 +18,8 @@ classifiers = [
 ]
 dependencies = [
   "black",
+  "gymnasium[accept-rom-license]",
+  "gymnasium[atari]",
   "gymnasium[box2d]",
   "gymnasium[mujoco]",
   "ioh",
