@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.stats import qmc
-from modcma import AskTellCMAES
+from modcma import AskTellCMAES, c_maes
 
 
 from .objective import Objective
@@ -951,6 +951,7 @@ class ModCMA:
     lambda_: int = 16        
     mu: int = None             
     initialization: str = "zero"
+    repelling: bool = True
 
     def __post_init__(self):
         self.lambda_ = self.lambda_ or init_lambda(self.n)
@@ -966,35 +967,37 @@ class ModCMA:
         m = init.get_x_prime(problem)
 
         state = State("mod-CMA", self.data_folder, self.test_gen, self.lambda_)
-
-        cma = AskTellCMAES(
-            int(self.n), 
-            # budget=self.budget, 
-            sigma0 = self.sigma0,
-            # x0=m, 
-            lambda_ = self.lambda_,
-            local_restart = 'BIPOP',
-            active=True,
-            mirrored="mirrored pairwise"
-        )
-
+        
+        modules = c_maes.parameters.Modules()
+        modules.center_placement = c_maes.options.UNIFORM
+        modules.bound_correction = c_maes.options.SATURATE
+        modules.restart_strategy = c_maes.options.RESTART
+        modules.sampler = c_maes.options.SOBOL
+        modules.repelling_restart = self.repelling
+        
+        settings = c_maes.parameters.Settings(
+            self.n,
+            modules,
+            sigma0=self.sigma0,
+            budget=int(1e12),
+            lambda0 = self.lambda_,
+            mu0 = self.mu            
+        )     
+        cma = c_maes.ModularCMAES(settings)
         try:
             while not problem.should_stop():
-                X = np.hstack([cma.ask() for _ in range(cma.parameters.lambda_)])
-                f = problem(X)
-
-                for x,y in zip(X, f):
-                    cma.tell(x, y)
-
-                best_idx = np.argmin(f)
-
+                cma.mutate(lambda _: float("nan"))
+                cma.p.pop.f = problem(cma.p.pop.X)
+                cma.select()
+                cma.recombine()
                 state.update(
                     problem,
-                    Solution(f[best_idx],  X[:, best_idx].copy()),
-                    Solution(np.mean(f), cma.parameters.m.copy()),
-                    cma.parameters.sigma,
-                    f
+                    Solution(cma.p.pop.f[0],  cma.p.pop.X[:, 0].copy()),
+                    Solution(np.mean(cma.p.pop.f), cma.p.adaptation.m.copy()),
+                    cma.p.mutation.sigma,
+                    cma.p.pop.f
                 )
+                cma.adapt(lambda x: problem(x.reshape(-1, 1)))
          
         except KeyboardInterrupt:
             pass

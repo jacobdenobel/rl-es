@@ -1,5 +1,6 @@
 import os
 import io
+import time
 from dataclasses import dataclass
 from contextlib import redirect_stdout
 
@@ -131,7 +132,13 @@ class Objective:
         seeds = None
         if self.seed_train_envs is not None:
             seeds = [self.seed_train_envs * 7 * i for i in range(1, 1 + envs.num_envs)]
-        observations, *_ = envs.reset(seed=seeds)
+        
+        for _ in range(5):
+            try:
+                observations, *_ =  envs.reset(seed=seeds)
+                break
+            except:
+                time.sleep(1)
         return observations
 
     def eval_sequential(self, x, train: bool = True, shaped: bool = True):
@@ -187,9 +194,17 @@ class Objective:
                 )
                 for _ in range(n)
             ]
-        self.envs = gym.vector.AsyncVectorEnv(
-            [lambda: self.setting.make() for _ in range(self.n_episodes * n)]
-        )
+            
+        for _ in range(5):
+            try:
+                self.envs = gym.vector.AsyncVectorEnv(
+                    [lambda: self.setting.make() for _ in range(self.n_episodes * n)]
+                )
+                break
+            except Exception as e:
+                time.sleep(1)
+        else:
+            breakpoint()
 
         for net, w in zip(self.nets, x.T):
             net.set_weights(w)

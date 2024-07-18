@@ -22,6 +22,7 @@ from rl_es.algorithms import (
 from rl_es.objective import Objective
 from rl_es.setting import ENVIRONMENTS
 from rl_es.utils import GaussianProjection 
+import modcma.c_maes as c_cmaes
 
 DATA = os.path.join(os.path.realpath(os.path.dirname(__file__)), "data")
 STRATEGIES = (
@@ -281,7 +282,7 @@ if __name__ == "__main__":
         default="zero",
     )
 
-    parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="csa")
+    parser.add_argument("--strategy", type=str, choices=STRATEGIES, default="r-cma-es")
     parser.add_argument(
         "--env_name", type=str, default="LunarLander-v2", choices=ENVIRONMENTS.keys()
     )
@@ -321,6 +322,7 @@ if __name__ == "__main__":
     print(env_setting)
 
     np.random.seed(args.seed)
+    c_cmaes.utils.set_seed(42)
     plot = True
     strategy_name = args.strategy
     if not args.strategy.startswith("ars"):
