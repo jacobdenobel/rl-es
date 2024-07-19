@@ -969,11 +969,21 @@ class ModCMA:
         state = State("mod-CMA", self.data_folder, self.test_gen, self.lambda_)
         
         modules = c_maes.parameters.Modules()
-        modules.center_placement = c_maes.options.UNIFORM
-        modules.bound_correction = c_maes.options.SATURATE
+        c_maes.constants.tol_min_sigma = .001
+        modules.center_placement = c_maes.options.ZERO
+        # modules.bound_correction = c_maes.options.SATURATE
         modules.restart_strategy = c_maes.options.RESTART
-        modules.sampler = c_maes.options.SOBOL
-        modules.repelling_restart = self.repelling
+        modules.sampler = c_maes.options.HALTON
+        modules.active = True
+        # modules.elitist = True
+        modules.mirrored = c_maes.options.MIRRORED
+        modules.ssa = c_maes.options.MSR
+        
+        
+        if self.n > 2000:
+            modules.matrix_adaptation = c_maes.options.SEPERABLE
+            
+        modules.repelling_restart = False#self.repelling
         
         settings = c_maes.parameters.Settings(
             self.n,
@@ -981,7 +991,8 @@ class ModCMA:
             sigma0=self.sigma0,
             budget=int(1e12),
             lambda0 = self.lambda_,
-            mu0 = self.mu            
+            mu0 = self.mu        ,
+            verbose=True    
         )     
         cma = c_maes.ModularCMAES(settings)
         try:
@@ -990,14 +1001,21 @@ class ModCMA:
                 cma.p.pop.f = problem(cma.p.pop.X)
                 cma.select()
                 cma.recombine()
+                
                 state.update(
                     problem,
-                    Solution(cma.p.pop.f[0],  cma.p.pop.X[:, 0].copy()),
+                    Solution(cma.p.stats.global_best.y,  cma.p.stats.global_best.x.copy()),
                     Solution(np.mean(cma.p.pop.f), cma.p.adaptation.m.copy()),
                     cma.p.mutation.sigma,
                     cma.p.pop.f
                 )
-                cma.adapt(lambda x: problem(x.reshape(-1, 1)))
+                def single_eval(x):
+                    problem.n_evals += 1
+                    y = float(problem.eval_sequential(x))
+                    print("single_eval", y)
+                    return y
+                
+                cma.adapt(single_eval)
          
         except KeyboardInterrupt:
             pass
