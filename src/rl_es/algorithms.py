@@ -991,7 +991,7 @@ class ModCMA:
             sigma0=self.sigma0,
             budget=int(1e12),
             lambda0 = self.lambda_,
-            mu0 = self.mu        ,
+            mu0 = self.mu,
             verbose=True    
         )     
         cma = c_maes.ModularCMAES(settings)
