@@ -115,7 +115,7 @@ class Objective:
     def __call__(self, x):
         
         if self.parallel:
-            f = np.concat([
+            f = np.append(*[
                 self.eval_parallel(split)
                 for split in np.array_split(x, np.ceil(x.shape[0] / self.max_parallel), axis=1)
             ])
