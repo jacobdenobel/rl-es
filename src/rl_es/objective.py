@@ -115,10 +115,10 @@ class Objective:
     def __call__(self, x):
         
         if self.parallel:
-            f = np.r_[[
+            f = np.concat([
                 self.eval_parallel(split)
                 for split in np.array_split(x, np.ceil(x.shape[0] / self.max_parallel), axis=1)
-            ]]
+            ])
         else:
             f = np.array([self.eval_sequential(xi) for xi in x.T])
 
