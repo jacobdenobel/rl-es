@@ -975,9 +975,9 @@ class ModCMA:
         modules.restart_strategy = c_maes.options.RESTART
         modules.sampler = c_maes.options.HALTON
         modules.active = True
-        # modules.elitist = True
+        modules.elitist = True
         modules.mirrored = c_maes.options.MIRRORED
-        modules.ssa = c_maes.options.MSR
+        modules.ssa = c_maes.options.CSA
         
         
         if self.n > 2000:
