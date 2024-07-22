@@ -241,6 +241,11 @@ if __name__ == "__main__":
         default=None,
     )
     parser.add_argument(
+        "--max_parallel",
+        type=int,
+        default=128,
+    )
+    parser.add_argument(
         "--lamb",
         type=int,
         default=None,
@@ -380,7 +385,8 @@ if __name__ == "__main__":
         regularized=args.regularized,
         seed_train_envs=args.seed if args.seed_train_envs else None,
         penalize_inactivity=args.penalize_inactivity,
-        break_timesteps=args.break_timesteps
+        break_timesteps=args.break_timesteps,
+        max_parallel=args.max_parallel
     )
 
     if args.play is None:

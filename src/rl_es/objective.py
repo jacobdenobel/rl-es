@@ -83,6 +83,7 @@ class Objective:
     seed_train_envs: int = None
     penalize_inactivity: bool = False
     break_timesteps: bool = True
+    max_parallel: int = 128
 
     def __post_init__(self):
         if self.normalized:
@@ -112,8 +113,12 @@ class Objective:
         self.test_writer.write(header)
 
     def __call__(self, x):
+        
         if self.parallel:
-            f = self.eval_parallel(x)
+            f = np.r_[
+                self.eval_parallel(split)
+                for split in np.array_split(x, np.ciel(x.shape[0] / self.max_parallel), axis=1)
+            ]
         else:
             f = np.array([self.eval_sequential(xi) for xi in x.T])
 
