@@ -1,6 +1,7 @@
 import os
 import io
 import time
+from itertools import chain
 from dataclasses import dataclass
 from contextlib import redirect_stdout
 
@@ -113,12 +114,11 @@ class Objective:
         self.test_writer.write(header)
 
     def __call__(self, x):
-        
         if self.parallel:
-            f = np.vstack([
+            f = np.array(list(chain.from_iterable([
                 self.eval_parallel(split)
                 for split in np.array_split(x, np.ceil(x.shape[0] / self.max_parallel), axis=1)
-            ]).ravel()
+            ])))
             
         else:
             f = np.array([self.eval_sequential(xi) for xi in x.T])
